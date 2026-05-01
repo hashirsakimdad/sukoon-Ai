@@ -15,6 +15,9 @@
   const emotionText = $("emotionText");
   const themeToggle = $("themeToggle");
 
+  const quotaBanner = $("quotaBanner");
+  const quotaBreathBtn = $("quotaBreathBtn");
+
   const exerciseCard = $("exerciseCard");
   const exerciseClose = $("exerciseClose");
   const exerciseTitle = $("exerciseTitle");
@@ -51,13 +54,15 @@
     if (on) scrollToBottom();
   };
 
-  const addMessage = (role, text) => {
+  const addMessage = (role, text, opts = {}) => {
     const msg = document.createElement("div");
     msg.className = "msg " + (role === "user" ? "msg-user" : "msg-ai");
 
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.textContent = text;
+
+    if (opts.isGreeting) bubble.classList.add("bubble-greeting");
 
     msg.appendChild(bubble);
     chatEl.appendChild(msg);
@@ -78,6 +83,20 @@
     const n = getMood();
     moodEmoji.textContent = EMOJI_BY_MOOD(n);
     moodValue.textContent = String(n);
+    updateMoodTrack(n);
+  };
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+
+  // Mood slider: blue (1) -> gold (10)
+  const updateMoodTrack = (n) => {
+    const t = clamp01((n - 1) / 9);
+    // hsl: 210 (blue) -> 45 (gold)
+    const hue = lerp(210, 45, t);
+    const c1 = `hsla(${hue}, 92%, 60%, 0.95)`;
+    const c2 = `hsla(${lerp(250, 50, t)}, 90%, 62%, 0.70)`;
+    moodSlider.style.background = `linear-gradient(90deg, ${c1}, ${c2})`;
   };
 
   const setEmotionBadge = (emotion, color) => {
@@ -162,6 +181,16 @@
     exerciseCard.classList.add("hidden");
     breathingBox.classList.add("hidden");
     groundingBox.classList.add("hidden");
+  };
+
+  const showQuotaBanner = (show) => {
+    if (!quotaBanner) return;
+    quotaBanner.classList.toggle("hidden", !show);
+  };
+
+  const isQuotaMessage = (text) => {
+    const t = String(text || "").toLowerCase();
+    return t.includes("quota") || t.includes("limit") || t.includes("resting for a moment");
   };
 
   const renderGroundingChecklist = () => {
@@ -254,6 +283,7 @@
     if (!message) return;
 
     hideExercise();
+    showQuotaBanner(false);
 
     addMessage("user", message);
     pushHistory("user", message);
@@ -276,6 +306,9 @@
 
       const data = await chatRequest({ message, mood, emotion });
       const reply = String(data.response || "").trim() || "Sorry, kuch masla aa gaya. Dobara try karo.";
+      if (isQuotaMessage(reply)) {
+        showQuotaBanner(true);
+      }
       addMessage("ai", reply);
       pushHistory("model", reply);
 
@@ -284,7 +317,7 @@
         showExercise(ex);
       }
     } catch (e) {
-      const err = "Sorry, kuch masla aa gaya. Dobara try karo.";
+      const err = "Yaar, network masla hai. Dobara try karo.";
       addMessage("ai", err);
       pushHistory("model", err);
     } finally {
@@ -402,11 +435,24 @@
     }
   });
 
+  if (quotaBreathBtn) {
+    quotaBreathBtn.addEventListener("click", () => {
+      showExercise("breathing");
+      showQuotaBanner(false);
+    });
+  }
+
   // Init
   initTheme();
   setupSpeech();
   updateMoodUI();
   updateMoodSeries(getMood());
-  bootGreeting();
+  (function bootGreetingPremium() {
+    const greet =
+      "Assalam o alaikum. Main Sukoon AI hoon — aap ka haal kaisa hai? " +
+      "Jo bhi aap feel kar rahe hain, yahan safe space hai. Aaj aap ko kis cheez ne sab se zyada affect kiya?";
+    addMessage("ai", greet, { isGreeting: true });
+    pushHistory("model", greet);
+  })();
 })();
 

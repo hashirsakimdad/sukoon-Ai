@@ -15,7 +15,7 @@
   </head>
   <body class="theme-dark">
     <div class="app">
-      <header class="topbar">
+      <header class="topbar topbar-fixed">
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">
             <span class="brand-logo">S</span>
@@ -23,19 +23,21 @@
           </div>
           <div class="brand-text">
             <div class="brand-title">Sukoon AI</div>
-            <div class="brand-tagline">Apna haal batao — hum sunenge 🤍</div>
+            <div class="brand-tagline">Apna haal batao — hum sunenge</div>
           </div>
         </div>
 
         <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle theme">
-          <span class="icon" aria-hidden="true">☼</span>
+          <span class="icon" aria-hidden="true">☾</span>
           <span class="icon-btn-text">Theme</span>
         </button>
       </header>
 
+      <div class="topbar-spacer" aria-hidden="true"></div>
+
       <section class="panel mood-panel" aria-label="Mood">
         <div class="panel-head">
-          <div class="panel-title">Mood</div>
+          <div class="panel-title">Aaj ka mood kaisa hai?</div>
           <div class="mood-live">
             <span id="moodEmoji" class="mood-emoji" aria-hidden="true">🙂</span>
             <span id="moodValue" class="mood-value">6</span><span class="mood-outof">/10</span>
@@ -52,8 +54,8 @@
 
       <section class="panel emotion-panel" aria-label="Emotion">
         <div class="emotion-left">
-          <div class="panel-title">Emotion</div>
-          <div class="emotion-sub">Auto-detected from your message</div>
+          <div class="panel-title">Mahsoos ho raha hai</div>
+          <div class="emotion-sub">Message se auto-detected</div>
         </div>
         <div id="emotionBadge" class="emotion-badge" style="--badge:#34D399">
           <span class="emotion-icon" aria-hidden="true">●</span>
@@ -62,6 +64,16 @@
       </section>
 
       <main class="chat-area" aria-label="Chat">
+        <section id="quotaBanner" class="notice hidden" role="status" aria-live="polite">
+          <div class="notice-left">
+            <div class="notice-title">Sukoon AI is resting for a moment</div>
+            <div class="notice-sub">Aap abhi Quick Breathing Exercise try kar sakte hain</div>
+          </div>
+          <button id="quotaBreathBtn" class="notice-btn" type="button">
+            Quick Breathing Exercise
+          </button>
+        </section>
+
         <section id="chat" class="chat"></section>
 
         <div id="typing" class="typing hidden" aria-live="polite" aria-label="Sukoon AI is typing">
@@ -112,17 +124,25 @@
           <div class="mic-status" id="micStatus" aria-live="polite"></div>
 
           <div class="chips" aria-label="Quick prompts">
-            <button class="chip" type="button" data-prompt="Bohot anxiety ho rahi hai">Bohot anxiety ho rahi hai</button>
-            <button class="chip" type="button" data-prompt="Ghar mein tension hai">Ghar mein tension hai</button>
-            <button class="chip" type="button" data-prompt="Neend nahi aati">Neend nahi aati</button>
-            <button class="chip" type="button" data-prompt="Exam ka pressure hai">Exam ka pressure hai</button>
-            <button class="chip" type="button" data-prompt="Akela feel ho raha hun">Akela feel ho raha hun</button>
+            <button class="chip" type="button" data-prompt="Bohot anxiety ho rahi hai"><span class="chip-ico" aria-hidden="true">😰</span> Bohot anxiety hai</button>
+            <button class="chip" type="button" data-prompt="Bahut udaas hun"><span class="chip-ico" aria-hidden="true">😢</span> Bahut udaas hun</button>
+            <button class="chip" type="button" data-prompt="Ghar mein tension hai"><span class="chip-ico" aria-hidden="true">😤</span> Ghar mein tension</button>
+            <button class="chip" type="button" data-prompt="Exam ka pressure hai"><span class="chip-ico" aria-hidden="true">📚</span> Exam pressure</button>
+            <button class="chip" type="button" data-prompt="Neend nahi aati"><span class="chip-ico" aria-hidden="true">🌙</span> Neend nahi aati</button>
+            <button class="chip" type="button" data-prompt="Akela feel ho raha hun"><span class="chip-ico" aria-hidden="true">😞</span> Akela feel ho raha hun</button>
           </div>
         </section>
       </main>
 
-      <footer class="footer">
-        Mushkil waqt mein: Umang 0317-4288665
+      <footer class="footer safety-card" role="contentinfo">
+        <div class="safety-left">
+          <div class="safety-title">Mushkil waqt mein madad lo</div>
+          <div class="safety-sub">Umang Helpline 0317-4288665</div>
+        </div>
+        <a class="safety-call" href="tel:03174288665" aria-label="Call Umang Helpline">
+          <span class="safety-ico" aria-hidden="true">📞</span>
+          Call Now
+        </a>
       </footer>
     </div>
 
