@@ -14,6 +14,7 @@
   const emotionBadge = $("emotionBadge");
   const emotionText = $("emotionText");
   const themeToggle = $("themeToggle");
+  const clearChatBtn = $("clearChatBtn");
 
   const quotaBanner = $("quotaBanner");
   const quotaBreathBtn = $("quotaBreathBtn");
@@ -26,7 +27,8 @@
   const groundingBox = $("groundingBox");
   const groundingList = $("groundingList");
 
-  const history = [];
+  const STORAGE_KEY = "sukoon_chat_history";
+  let history = [];
   const moodSeries = [];
 
   const EMOJI_BY_MOOD = (n) => {
@@ -45,8 +47,14 @@
     happy: "Happy",
   };
 
-  const scrollToBottom = () => {
-    chatEl.scrollTo({ top: chatEl.scrollHeight, behavior: "smooth" });
+  // Auto-scroll (bulletproof): wait for DOM/layout, then snap to bottom
+  const scrollToBottom = (behavior = "smooth") => {
+    if (!chatEl) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        chatEl.scrollTo({ top: chatEl.scrollHeight, behavior });
+      });
+    });
   };
 
   const setTyping = (on) => {
@@ -69,9 +77,47 @@
     scrollToBottom();
   };
 
+  const saveHistory = () => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    } catch (e) {
+      // ignore storage errors (private mode / quota)
+    }
+  };
+
   const pushHistory = (role, content) => {
     history.push({ role, content });
     if (history.length > 60) history.splice(0, history.length - 60);
+    saveHistory();
+  };
+
+  const loadHistory = () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((m) => m && typeof m === "object")
+        .map((m) => ({
+          role: String(m.role || ""),
+          content: String(m.content || ""),
+        }))
+        .filter((m) => (m.role === "user" || m.role === "model") && m.content.trim().length > 0)
+        .slice(-60);
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const renderHistory = (items) => {
+    if (!chatEl) return;
+    chatEl.innerHTML = "";
+    items.forEach((m, idx) => {
+      const uiRole = m.role === "user" ? "user" : "ai";
+      addMessage(uiRole, m.content, { isGreeting: idx === 0 && uiRole === "ai" });
+    });
+    scrollToBottom("auto");
   };
 
   const getMood = () => {
@@ -186,6 +232,7 @@
   const showQuotaBanner = (show) => {
     if (!quotaBanner) return;
     quotaBanner.classList.toggle("hidden", !show);
+    if (show) scrollToBottom("auto");
   };
 
   const isQuotaMessage = (text) => {
@@ -442,17 +489,41 @@
     });
   }
 
-  // Init
-  initTheme();
-  setupSpeech();
-  updateMoodUI();
-  updateMoodSeries(getMood());
-  (function bootGreetingPremium() {
+  const bootGreeting = () => {
     const greet =
       "Assalam o alaikum. Main Sukoon AI hoon — aap ka haal kaisa hai? " +
       "Jo bhi aap feel kar rahe hain, yahan safe space hai. Aaj aap ko kis cheez ne sab se zyada affect kiya?";
     addMessage("ai", greet, { isGreeting: true });
     pushHistory("model", greet);
-  })();
+  };
+
+  const clearChat = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (e) {}
+    history = [];
+    if (chatEl) chatEl.innerHTML = "";
+    hideExercise();
+    showQuotaBanner(false);
+    bootGreeting();
+  };
+
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener("click", () => clearChat());
+  }
+
+  // Init
+  initTheme();
+  setupSpeech();
+  updateMoodUI();
+  updateMoodSeries(getMood());
+
+  // Load persisted chat on startup
+  history = loadHistory();
+  if (history.length > 0) {
+    renderHistory(history);
+  } else {
+    bootGreeting();
+  }
 })();
 

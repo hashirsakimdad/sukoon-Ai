@@ -27,10 +27,16 @@
           </div>
         </div>
 
-        <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle theme">
-          <span class="icon" aria-hidden="true">☾</span>
-          <span class="icon-btn-text">Theme</span>
-        </button>
+        <div class="topbar-actions">
+          <button id="clearChatBtn" class="icon-btn" type="button" aria-label="Clear chat">
+            <span class="icon" aria-hidden="true">⌫</span>
+            <span class="icon-btn-text">Clear</span>
+          </button>
+          <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle theme">
+            <span class="icon" aria-hidden="true">☾</span>
+            <span class="icon-btn-text">Theme</span>
+          </button>
+        </div>
       </header>
 
       <div class="topbar-spacer" aria-hidden="true"></div>
@@ -64,7 +70,7 @@
       </section>
 
       <main class="chat-area" aria-label="Chat">
-        <section id="quotaBanner" class="notice hidden" role="status" aria-live="polite">
+        <section id="quotaBanner" class="notice notice-center hidden" role="status" aria-live="polite">
           <div class="notice-left">
             <div class="notice-title">Sukoon AI is resting for a moment</div>
             <div class="notice-sub">Aap abhi Quick Breathing Exercise try kar sakte hain</div>
