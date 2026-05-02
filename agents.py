@@ -614,7 +614,6 @@ class EmotionAgent:
 
 class TherapyAgent:
     def __init__(self) -> None:
-        """Cache model id for optional direct generate_content mirrors."""
         self._preferred_model = AGENT_PRIMARY_MODEL
 
     def respond(
@@ -625,99 +624,62 @@ class TherapyAgent:
         mood: int | None,
     ) -> dict[str, Any]:
         emotion_data = emotion_analysis if isinstance(emotion_analysis, dict) else {}
-        mood_disp = mood if isinstance(mood, int) else "unknown"
-        mem = safe_str(memory_context, max_len=4000).replace('"', "'")
-        user_msg = safe_str(message, max_len=7500).replace('"', "'")
-
         base_fallback = therapy_fallback_bundle(message, emotion_data)
 
-        prompt = f"""You are Sukoon AI — a caring Pakistani friend who gives DIFFERENT responses every time based on what user actually said.
+        user_msg = safe_str(message, max_len=6000).replace('"', "'")
+        mem = safe_str(memory_context, max_len=2200).replace('"', "'")
+        mood_disp = mood if isinstance(mood, int) else "unknown"
 
-STRICT RULES:
-- NEVER start with "Main yahan hun sunne ke liye"
-- NEVER use "courageous"
-- NEVER give generic comfort — respond to EXACTLY what they said
-- If user says "anxiety hai" → give specific anxiety advice
-- If user says "exam pressure" → talk about exams specifically
-- If user says "neend nahi" → talk about sleep specifically
-- If user says "ghar mein tension" → talk about family specifically
-- Use their actual words back to them naturally
-- Be conversational like a real dost — not a therapist script
+        # Roman Urdu system prompt + plain-text generation (NO JSON parsing).
+        system_prompt = (
+            "Tu ek Pakistani mental health support chatbot hai. Naam hai Sukoon AI.\n"
+            "Rules:\n"
+            "- Hamesha Roman Urdu mein jawab de\n"
+            "- User ki exact baat pakad ke respond kar\n"
+            "- Har jawab ALAG hona chahiye, situation ke hisaab se\n"
+            "- Generic lines bilkul mat bol jaise \"main yahan hun\" ya \"you are courageous\"\n"
+            "- Chhota jawab do — 2-3 lines max\n"
+            "- Ek specific sawal poocho end mein\n"
+            "- Agar exam ho to exam ke baare mein poocho\n"
+            "- Agar neend ho to neend ke baare mein poocho\n"
+            "- Agar ghar/family ho to family ke baare mein poocho\n"
+        )
 
-User emotion: {emotion_data.get("primary_emotion", "okay")}
-Emotion intensity: {emotion_data.get("intensity", 5)}/10
-User mood score: {mood_disp}/10
-Memory context (may be incomplete): {mem}
+        prompt = (
+            f"Emotion: {safe_str(emotion_data.get('primary_emotion', 'okay'), max_len=24)}\n"
+            f"Intensity: {safe_str(emotion_data.get('intensity', 5), max_len=16)}/10\n"
+            f"Mood: {mood_disp}/10\n"
+            f"Memory: {mem}\n\n"
+            f'User said: "{user_msg}"\n\n'
+            "Ab Roman Urdu mein 2-3 lines ka jawab do aur end mein aik specific sawal.\n"
+            "Jawab bilkul user ki baat ke mutabiq ho; generic lines mat bolna."
+        )
 
-User said: "{user_msg}"
-
-Respond in 3-4 sentences MAX. Roman Urdu + English mix.
-End with ONE specific question related to what they said.
-Every response must be UNIQUE and PERSONAL.
-
-Return ONLY valid JSON (no markdown) with keys:
-  "response" (string),
-  "suggested_exercise" exactly one of: breathing, grounding, none,
-  "technique_used" (short phrase, what you actually used),
-  "follow_up_needed" (boolean)
-"""
-
-        gen_cfg = _generation_config(temperature=0.9, max_output_tokens=300)
-        raw_out = ""
-
-        if gen_cfg is not None:
+        try:
+            gen_cfg = _generation_config(temperature=0.9, max_output_tokens=220)
             for model_name in (self._preferred_model, AGENT_MODEL_FALLBACK):
                 try:
-                    model = genai.GenerativeModel(model_name=model_name)
-                    resp = model.generate_content(prompt, generation_config=gen_cfg)
-                    txt = safe_str(getattr(resp, "text", ""))
-                    if txt:
-                        raw_out = txt
-                        break
+                    model = genai.GenerativeModel(
+                        model_name=model_name,
+                        system_instruction=system_prompt,
+                    )
+                    if gen_cfg is not None:
+                        resp = model.generate_content(prompt, generation_config=gen_cfg)
+                    else:
+                        resp = model.generate_content(prompt)
+                    text = safe_str(getattr(resp, "text", ""), max_len=5000).strip()
+                    if text:
+                        return {
+                            "response": text,
+                            "suggested_exercise": "none",
+                            "technique_used": "personalized support",
+                            "follow_up_needed": True,
+                        }
                 except gexc.NotFound:
                     continue
-                except Exception as e:
-                    if _quotaish(e):
-                        break
-                    print(f"TherapyAgent direct model {model_name!r}:", e)
-                    traceback.print_exc()
-                    break
-
-        if not raw_out:
-            raw_out = gemini_plain_text(
-                prompt,
-                system_instruction="ONLY valid compact JSON.",
-                temperature=0.9,
-                max_output_tokens=300,
-            )
-
-        jb = extract_first_json(raw_out or "") if raw_out else None
-
-        banned_openers = ("main yahan hun sunne", "courageous", "sunne ke liye")
-        if not jb:
-            return base_fallback
-        try:
-            d = json.loads(jb)
-            if not isinstance(d, dict):
-                return base_fallback
-            rep = safe_str(str(d.get("response", "")), max_len=5000)
-            low_rep = rep.lower()
-            if not rep or any(b in low_rep for b in banned_openers):
-                return base_fallback
-            ex = safe_str(str(d.get("suggested_exercise", "none"))).lower() or "none"
-            if ex not in ALLOWED_EXERCISES:
-                ex = "none"
-            tech = safe_str(str(d.get("technique_used", "")), max_len=200)
-            if not tech:
-                tech = base_fallback["technique_used"]
-            fol = bool(d.get("follow_up_needed"))
-            return {
-                "response": rep,
-                "suggested_exercise": ex,
-                "technique_used": tech,
-                "follow_up_needed": fol,
-            }
-        except json.JSONDecodeError:
+            raise RuntimeError("Empty Gemini response")
+        except Exception:
+            # Only fallback when Gemini truly errors / returns nothing.
             return base_fallback
 
 
