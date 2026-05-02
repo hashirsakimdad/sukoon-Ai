@@ -176,15 +176,16 @@ def gemini_plain_text(
 
 
 def _micro_hint_line(ml: str) -> str:
+    # IMPORTANT: keep fallback non-templated. No "Quick win" format.
     if "exam" in ml or "paper" in ml or "test" in ml:
-        return "Quick win: aik subject ka 25-minute chunk + 5-minute stretch gap try karlo."
+        return "Aaj sirf aik chota target choose karo (25 min) aur phir 5 min break."
     if "neend" in ml or "sleep" in ml or "sone" in ml:
-        return "Quick win: screen 35 min pehle off + ek hi wake time ik din rakho."
+        return "Aaj raat lights dim + screen thori jaldi band karke try karo."
     if "ghar" in ml or "family" in ml or "ma" in ml or "baap" in ml:
-        return "Quick win: aik short boundary sentence calmly bolne ki rehearsal."
+        return "Aik calm line soch lo jo tum bol sakte ho bina larai ke."
     if "anxiety" in ml or "ghabra" in ml or "panic" in ml:
-        return "Quick win: 4-count inhale / 6-count exhale sirf paanch rounds."
-    return "Quick win: aik sentence likho jo abhi realistically control kar sakte ho."
+        return "Abhi 4-count inhale / 6-count exhale 5 rounds kar ke dekho."
+    return "Thora sa context likho: kab se aur kis cheez se start hua?"
 
 
 def therapy_fallback_bundle(message: str, emotion_data: dict[str, Any]) -> dict[str, Any]:
@@ -205,15 +206,15 @@ def therapy_fallback_bundle(message: str, emotion_data: dict[str, Any]) -> dict[
     else:
         tail_q = "Is feeling ka sab se recent moment kaunsa tha jo ab tak yaad hai?"
 
-    hint = _micro_hint_line(ml)
     if not u:
         reply = (
             "Thori detail aur likho ta jawab DIRECT tumhari situation pe latch ho 🤍 "
             + tail_q
         )
     else:
+        hint = _micro_hint_line(ml)
         reply = (
-            f"Tumhari wording \"{u}\" — okay, yehi jagah pakad ke chalenge 🤍 "
+            f"Achha, tumne bola: \"{u}\".\n"
             f"{hint}\n\n{tail_q}"
         )
 
@@ -632,27 +633,23 @@ class TherapyAgent:
 
         # Roman Urdu system prompt + plain-text generation (NO JSON parsing).
         system_prompt = (
-            "Tu ek Pakistani mental health support chatbot hai. Naam hai Sukoon AI.\n"
-            "Rules:\n"
-            "- Hamesha Roman Urdu mein jawab de\n"
-            "- User ki exact baat pakad ke respond kar\n"
-            "- Har jawab ALAG hona chahiye, situation ke hisaab se\n"
-            "- Generic lines bilkul mat bol jaise \"main yahan hun\" ya \"you are courageous\"\n"
-            "- Chhota jawab do — 2-3 lines max\n"
-            "- Ek specific sawal poocho end mein\n"
-            "- Agar exam ho to exam ke baare mein poocho\n"
-            "- Agar neend ho to neend ke baare mein poocho\n"
-            "- Agar ghar/family ho to family ke baare mein poocho\n"
+            "Tu Sukoon AI hai — Pakistani mental health support chatbot.\n"
+            "- Roman Urdu mein jawab de\n"
+            "- User ki exact situation ke baare mein baat kar\n"
+            "- Har response naturally alag hoga kyunki situation alag hai\n"
+            "- 2-3 lines max\n"
+            "- End mein ek specific sawal poocho us ki situation se related\n"
+            "- Koi fixed template mat use karo\n"
+            "- Koi \"Quick win\" format mat use karo\n"
+            "- Koi \"yehi jagah pakad ke chalenge\" mat likho\n"
         )
 
+        # IMPORTANT: no examples/templates in prompt. Only user input + light context.
         prompt = (
+            f"Memory context: {mem}\n"
             f"Emotion: {safe_str(emotion_data.get('primary_emotion', 'okay'), max_len=24)}\n"
-            f"Intensity: {safe_str(emotion_data.get('intensity', 5), max_len=16)}/10\n"
-            f"Mood: {mood_disp}/10\n"
-            f"Memory: {mem}\n\n"
-            f'User said: "{user_msg}"\n\n'
-            "Ab Roman Urdu mein 2-3 lines ka jawab do aur end mein aik specific sawal.\n"
-            "Jawab bilkul user ki baat ke mutabiq ho; generic lines mat bolna."
+            f"Mood: {mood_disp}/10\n\n"
+            f'User: "{user_msg}"'
         )
 
         try:
