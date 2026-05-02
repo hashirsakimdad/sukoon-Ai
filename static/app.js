@@ -1,4 +1,4 @@
-(() => {
+document.addEventListener("DOMContentLoaded", function () {
   const $ = (id) => document.getElementById(id);
 
   const STORAGE_SESSION = "sukoon_session_id";
@@ -28,7 +28,7 @@
   const chatScroll = $("chatScroll");
   const typingIndicator = $("typingIndicator");
   const inputEl = $("messageInput");
-  const sendBtn = $("sendBtn");
+  const sendBtn = $("send-btn");
   const reportHint = $("reportHint");
   const moodSlider = $("moodSlider");
   const moodEmoji = $("moodEmoji");
@@ -37,13 +37,13 @@
   const emotionBadge = $("emotionBadge");
   const emotionUrdu = $("emotionUrdu");
   const emotionEmojiEl = $("emotionEmoji");
-  const themeToggle = $("themeToggle");
+  const themeToggle = $("theme-toggle");
   const heroIntro = $("heroIntro");
   const heroStartBtn = $("heroStartBtn");
   const appMain = $("appMain");
   const memoryBar = $("memoryBar");
   const memoryInsightText = $("memoryInsightText");
-  const clearHistoryBtn = $("clearHistoryBtn");
+  const clearHistoryBtn = $("clear-btn");
   const historySidebar = $("historySidebar");
   const historyBackdrop = $("historyBackdrop");
   const openSidebarBtn = $("openSidebarBtn");
@@ -65,6 +65,7 @@
   const groundingDone = $("groundingDone");
   const groundingProgressFill = $("groundingProgressFill");
   const openNewTabBtn = $("openNewTabBtn");
+  const reportBtn = $("report-btn");
 
   function getMoodEmoji(score) {
     if (score <= 2) return "😢";
@@ -894,7 +895,7 @@
 
   clearAllSessionsBtn && clearAllSessionsBtn.addEventListener("click", clearAllSessions);
 
-  document.querySelectorAll(".chip-v").forEach((btn) => {
+  document.querySelectorAll(".chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       closeLeftNav();
       sendMessage(btn.getAttribute("data-prompt") || "");
@@ -982,6 +983,12 @@
     }
   }
 
+  reportBtn &&
+    reportBtn.addEventListener("click", () => {
+      closeLeftNav();
+      generateReport();
+    });
+
   document.querySelectorAll(".js-report-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       closeLeftNav();
@@ -993,8 +1000,6 @@
 
   /* Init */
   initTheme();
-  updateMuteButtonUI();
-  setupSpeech();
   setEmotionUI("okay", glowForEmotion("okay"), urduGuess("okay"));
   setMemoryBar(bootstrap.latest_memory_insight || "");
 
@@ -1035,4 +1040,4 @@
     chartResizeObs = new ResizeObserver(() => resizeCanvasPixels());
     chartResizeObs.observe(moodChart);
   }
-})();
+});

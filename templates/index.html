@@ -75,29 +75,25 @@
 
         <div class="divider"></div>
 
-        <button
-          type="button"
-          class="btn-report-sidebar js-report-btn"
-          title="Apni weekly mental health report download karo"
-        >
+        <button type="button" class="btn-report-sidebar js-report-btn" title="Apni weekly mental health report download karo">
           Meri Report
         </button>
 
         <section class="side-block chip-stack" id="quickChips">
-          <button type="button" class="chip-v" data-prompt="Aj anxiety feel ho rahi hai, dil tez dhadak raha hai.">
+          <button type="button" class="chip" data-prompt="Aj anxiety feel ho rahi hai, dil tez dhadak raha hai.">
             Anxiety hai
           </button>
-          <button type="button" class="chip-v" data-prompt="Bahut udaas hun, kuch samajh nahi aa raha.">Udaas hun</button>
-          <button type="button" class="chip-v" data-prompt="Ghar mei tension hai, log kya kahenge wala pressure hai.">
+          <button type="button" class="chip" data-prompt="Bahut udaas hun, kuch samajh nahi aa raha.">Udaas hun</button>
+          <button type="button" class="chip" data-prompt="Ghar mei tension hai, log kya kahenge wala pressure hai.">
             Ghar tension
           </button>
-          <button type="button" class="chip-v" data-prompt="Exams ka buhat pressure hai, neend kharab hai.">
+          <button type="button" class="chip" data-prompt="Exams ka buhat pressure hai, neend kharab hai.">
             Exam pressure
           </button>
-          <button type="button" class="chip-v" data-prompt="Neend nahi aa rahi, dimagh chalta rehta hai.">
+          <button type="button" class="chip" data-prompt="Neend nahi aa rahi, dimagh chalta rehta hai.">
             Neend nahi
           </button>
-          <button type="button" class="chip-v" data-prompt="Apnapan nahi mehsoos ho raha, akela lag raha hun.">
+          <button type="button" class="chip" data-prompt="Apnapan nahi mehsoos ho raha, akela lag raha hun.">
             Akela hun
           </button>
         </section>
@@ -124,15 +120,16 @@
         <div class="top-bar-actions">
           <button
             type="button"
+            id="report-btn"
             class="icon-circle btn-report-compact js-report-btn"
             title="Apni weekly mental health report download karo"
             aria-label="Meri weekly report"
           >
             Report
           </button>
-          <button type="button" id="themeToggle" class="icon-circle" aria-label="Toggle theme">Theme</button>
+          <button type="button" id="theme-toggle" class="icon-circle" aria-label="Toggle theme">Theme</button>
           <button type="button" id="openSidebarBtn" class="icon-circle" aria-label="Past sessions">History</button>
-          <button type="button" id="clearHistoryBtn" class="icon-circle icon-danger-soft" aria-label="Clear chat">Clear</button>
+          <button type="button" id="clear-btn" class="icon-circle icon-danger-soft" aria-label="Clear chat">Clear</button>
         </div>
       </header>
 
@@ -195,7 +192,7 @@
               rows="1"
               placeholder="Apna haal batao... (Roman Urdu ya English mein)"
             ></textarea>
-            <button type="button" id="sendBtn" class="btn-send" disabled aria-label="Send message">→</button>
+            <button type="button" id="send-btn" class="btn-send" disabled aria-label="Send message">→</button>
           </div>
         </div>
       </div>
@@ -221,6 +218,6 @@
   "recent_sessions": recent_sessions
 }|tojson }}
     </script>
-    <script src="/static/app.js" defer></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
   </body>
 </html>
