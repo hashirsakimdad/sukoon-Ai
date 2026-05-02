@@ -6,6 +6,7 @@ Each agent calls Gemini separately (gemini-1.5-flash). Failures are contained wi
 from __future__ import annotations
 
 import json
+import random
 import re
 import traceback
 from pathlib import Path
@@ -50,19 +51,21 @@ URDU_LABELS: dict[str, str] = {
 }
 
 HIGH_CRISIS_KEYWORDS = (
+    # Roman Urdu / Urdu-ish phrases
+    "mar raha",
+    "marna chahta",
+    "jeena nahi",
+    "khatam karna",
+    "khud ko",
+    "zindagi nahi chahiye",
+    "mar jao",
+    "mar jaun",
+    "khatam ho jao",
+    # English
     "suicide",
     "suicidal",
-    "khudkushi",
-    "khud kushi",
-    "mar jana chahta",
-    "mar jaun",
-    "mar jaao",
-    "zindagi khatam",
-    "khud khushi",
     "self harm",
     "hurt myself",
-    "mary zindagi",
-    "qatil",
 )
 
 MEDIUM_CRISIS_HINTS = (
@@ -176,68 +179,18 @@ def gemini_plain_text(
     return ""
 
 
-def _micro_hint_line(ml: str) -> str:
-    if "exam" in ml or "paper" in ml or "test" in ml:
-        return "Aaj sirf aik chota target choose karo (25 min) aur phir 5 min break."
-    if "neend" in ml or "sleep" in ml or "sone" in ml:
-        return "Aaj raat lights dim + screen thori jaldi band karke try karo."
-    if "ghar" in ml or "family" in ml or "ma" in ml or "baap" in ml:
-        return "Abhi bas itna karo: 2 minute ka break lo, pani pi lo, aur jo baat kehni hai usko aik simple line mein likh lo."
-    if "anxiety" in ml or "ghabra" in ml or "panic" in ml:
-        return "Abhi 4-count inhale / 6-count exhale 5 rounds kar ke dekho."
-    return "Thora sa context likho: kab se aur kis cheez se start hua?"
-
-
 def therapy_fallback_bundle(message: str, emotion_data: dict[str, Any]) -> dict[str, Any]:
-    u = safe_str(message, max_len=280).strip().replace('"', "'").replace("\n", " ")
-    ml = u.lower()
-    pe = safe_str(str(emotion_data.get("primary_emotion", "okay"))).lower()
-
-    if "exam" in ml or "paper" in ml or "test" in ml:
-        tail_q = "Sub se heavy pressure kis subject/paper se lag rahi hai kal tak?"
-    elif "neend" in ml or "sleep" in ml or "sone" in ml:
-        tail_q = "Neend toot rahi jagte rehnay se hai ya jag kar so nahi sakte?"
-    elif "ghar" in ml or "family" in ml:
-        tail_q = "Ghar walon ki kis expectation/baat ne aaj sab se zyada chauband kiya?"
-    elif "akela" in ml or "lonely" in ml or "tanha" in ml:
-        tail_q = "Akela zyada raat aa raha ya din ka koi waqt spike karta?"
-    elif "anxiety" in ml or "ghabra" in ml or "panic" in ml or pe == "anxiety":
-        tail_q = "Triggers zyada body mein (dhadkan/tight chest) dikhte ya dimagh mein loop?"
-    else:
-        tail_q = "Is feeling ka sab se recent moment kaunsa tha jo ab tak yaad hai?"
-
-    # 4-sentence fallback: validation → empathy → practical step → caring question
-    def _validation() -> str:
-        if "anxiety" in ml or "ghabra" in ml or "panic" in ml or pe == "anxiety":
-            return "Anxiety feel hona bilkul samajh aata hai."
-        if "udaas" in ml or "sad" in ml or pe == "sad":
-            return "Udaasi feel hona bilkul theek hai."
-        if "ghar" in ml or "family" in ml:
-            return "Ghar ki tension se thak jana bilkul normal hai."
-        if "exam" in ml or "paper" in ml or "test" in ml:
-            return "Exam ka pressure heavy lagna bilkul natural hai."
-        return "Yeh feeling valid hai, aur tum akelay nahi ho."
-
-    def _empathy() -> str:
-        return "Yaar yeh sach mein mushkil hai, is waqt dimaag aur jism dono heavy ho jate hain."
-
-    step = _micro_hint_line(ml)
-    reply = f"{_validation()} {_empathy()} {step} {tail_q}"
-
-    ex = "none"
-    if pe in ("anxiety", "stressed") or any(k in ml for k in ("anxiety", "ghabra", "panic")):
-        ex = "breathing"
-    elif pe in ("sad", "angry"):
-        ex = "grounding"
-    tech = (
-        "grounding anchors"
-        if ex == "grounding"
-        else ("paced breathing" if ex == "breathing" else "focused reflection")
-    )
+    fallback_responses = [
+        "Yaar, thoda aur batao — kya ho raha hai exactly?",
+        "Samajh raha hun yaar. Kab se aisa feel ho raha hai?",
+        "Yeh sun ke dil bhaari hua. Ghar mein koi hai abhi tumhare paas?",
+        "Yaar yeh bohot mushkil lag raha hai. Kya aaj kuch specific hua?",
+    ]
+    reply = random.choice(fallback_responses)
     return {
         "response": reply,
-        "suggested_exercise": ex,
-        "technique_used": tech,
+        "suggested_exercise": "none",
+        "technique_used": "supportive fallback",
         "follow_up_needed": True,
     }
 
@@ -492,6 +445,11 @@ class EmotionAgent:
                 "is_crisis": True,
                 "severity": "high",
                 "reason": safe_str(hit_high, max_len=120),
+                "response": (
+                    "Yaar ruko — main sun raha hun. Tum akele nahi ho.\n"
+                    "Abhi Umang helpline pe call karo: 0317-4288665.\n"
+                    "Woh 24/7 available hain aur samjhenge. Kya tum safe ho abhi?"
+                ),
             }
         hit_med = next((m for m in MEDIUM_CRISIS_HINTS if m in msg_low), None)
         if hit_med:
@@ -717,16 +675,14 @@ class OrchestratorAgent:
         severity = safe_str(str(crisis.get("severity", "low"))).lower()
 
         emergency = (
-            "Main tumhari baat sunkar behad fikar-mand hun. Tum bilkul akelay nahi ho."
-            "\nPLEASE abhi Umang Crisis Helpline pe call lagao ya message karo — trained log hamesha khade hote hain: "
-            "**0317-4288665**.\n"
-            'Agar khatra abhi aur zyada ho to **1122** ya apne qareebi hospital/emergency.'
-            "\nHum phir baat zaroor karenge jab tum thori hifazat mein ho."
+            "Yaar ruko — main sun raha hun. Tum akele nahi ho.\n"
+            "Abhi Umang helpline pe call karo: 0317-4288665.\n"
+            "Woh 24/7 available hain aur samjhenge. Kya tum safe ho abhi?"
         )
 
         if crisis.get("is_crisis") and severity == "high":
             return {
-                "response": emergency,
+                "response": safe_str(crisis.get("response") or emergency, max_len=2000),
                 "emotion": "anxiety",
                 "color": EMOTION_COLORS["anxiety"],
                 "urdu_label": URDU_LABELS["anxiety"],
