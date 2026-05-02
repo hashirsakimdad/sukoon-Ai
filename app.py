@@ -1,18 +1,20 @@
 from dotenv import load_dotenv
 
-# load_dotenv() at top
 load_dotenv()
 
 import json
 import os
 import traceback
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session
+from flask_cors import CORS
 
 import google.generativeai as genai
 from google.api_core import exceptions as gexc
-
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -20,8 +22,10 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Requested model name, but it may not exist for your API key.
-# We keep it as primary to match spec and fallback to an available Flash model if needed.
+DATA_DIR = Path("data")
+SESSIONS_DIR = DATA_DIR / "sessions"
+SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
 PRIMARY_MODEL = "gemini-1.5-flash"
 FALLBACK_MODELS = [
     "models/gemini-2.0-flash",
@@ -29,18 +33,14 @@ FALLBACK_MODELS = [
     "models/gemini-2.5-flash",
 ]
 
-
-CHAT_SYSTEM_PROMPT = (
-    "You are Sukoon AI, a warm compassionate mental health assistant for Pakistani users. "
-    "You deeply understand Roman Urdu, Urdu, and English — respond in whatever language the user writes in. "
-    "You know Pakistani culture: family pressure, izzat, rishtay tension, exam stress, career anxiety, loneliness. "
-    "Be like a caring dost — not a clinical robot. Use CBT techniques naturally: breathing, thought reframing, grounding. "
-    "Based on the detected emotion tag provided, adjust your tone — if anxiety: be calming, if sad: be warm and validating, "
-    "if angry: be grounding, if stressed: be practical. Suggest an exercise when appropriate. "
-    "If crisis or self-harm mentioned: recommend Umang helpline 0317-4288665 immediately. "
-    "Max 4 sentences. End with one gentle question."
-)
-
+URDU_LABELS = {
+    "anxiety": "پریشانی",
+    "sad": "اداسی",
+    "stressed": "تھکاوٹ",
+    "angry": "غصہ",
+    "okay": "ٹھیک",
+    "happy": "خوشی",
+}
 
 EMOTION_COLORS: dict[str, str] = {
     "anxiety": "#A78BFA",
@@ -54,8 +54,25 @@ EMOTION_COLORS: dict[str, str] = {
 ALLOWED_EMOTIONS = set(EMOTION_COLORS.keys())
 ALLOWED_EXERCISES = {"breathing", "grounding", "none"}
 
+SYSTEM_PROMPT = (
+    "You are Sukoon AI, a warm compassionate mental health assistant for Pakistani users. "
+    "You understand Roman Urdu, Urdu, and English — always respond in the same language the user writes in. "
+    "You deeply know Pakistani culture: family pressure, izzat, rishtay tension, exam stress, career anxiety, "
+    "loneliness, log kya kahenge. Be like a caring dost — never clinical or robotic. "
+    "Remember what the user told you earlier in this conversation and reference it naturally. "
+    "Use CBT techniques: breathing exercises, thought reframing, grounding 5-4-3-2-1. "
+    "Based on emotion: anxiety=be calming, sad=be warm+validating, angry=be grounding, stressed=be practical. "
+    "Suggest exercise when mood below 5 or emotion is anxiety/sad/stressed. "
+    "For crisis or self-harm: immediately say Umang helpline 0317-4288665. "
+    "Keep responses 3-5 sentences. End with one caring question."
+)
 
-def _safe_str(value: Any, max_len: int = 6000) -> str:
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _safe_str(value: Any, max_len: int = 8000) -> str:
     if value is None:
         return ""
     if not isinstance(value, str):
@@ -66,54 +83,30 @@ def _safe_str(value: Any, max_len: int = 6000) -> str:
     return value
 
 
-def _build_gemini_history(history: Any) -> list[dict[str, Any]]:
-    """
-    Frontend history shape:
-      { role: "user"|"model"|"assistant", content: "..." }
-    Gemini chat history shape:
-      { role: "user"|"model", parts: ["..."] }
-    """
-    if not isinstance(history, list):
-        return []
+def _friendly_error_payload(message: str) -> dict[str, Any]:
+    return {"ok": False, "error": message}
 
-    out: list[dict[str, Any]] = []
-    for item in history[-40:]:
-        if not isinstance(item, dict):
-            continue
-        role = _safe_str(item.get("role"), max_len=32).lower()
-        content = _safe_str(item.get("content"))
-        if not content:
-            continue
 
-        if role == "user":
-            out.append({"role": "user", "parts": [content]})
-        elif role in ("model", "assistant", "ai", "bot"):
-            out.append({"role": "model", "parts": [content]})
-
-    return out
+def _iter_models() -> list[str]:
+    return [PRIMARY_MODEL] + FALLBACK_MODELS
 
 
 def _strip_code_fences(text: str) -> str:
-    t = _safe_str(text, max_len=20000)
+    t = _safe_str(text, max_len=24000)
     if t.startswith("```"):
         lines = t.splitlines()
-        # remove first fence line
-        lines = lines[1:]
-        # remove last fence line if present
-        if lines and lines[-1].strip().startswith("```"):
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         t = "\n".join(lines).strip()
     return t
 
 
 def _extract_first_json_object(text: str) -> str:
-    """
-    Gemini often wraps JSON in ```json fences or adds extra text.
-    This extracts the first top-level {...} block if possible.
-    """
     t = _strip_code_fences(text)
     start = t.find("{")
-    if start == -1:
+    if start < 0:
         return t
     depth = 0
     for i in range(start, len(t)):
@@ -127,206 +120,571 @@ def _extract_first_json_object(text: str) -> str:
     return t
 
 
-def _iter_model_names() -> list[str]:
-    # Keep PRIMARY_MODEL first to match spec, but it may 404 at request-time.
-    return [PRIMARY_MODEL] + FALLBACK_MODELS
+def _build_gemini_history(history: Any) -> list[dict[str, Any]]:
+    if not isinstance(history, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in history[-40:]:
+        if not isinstance(item, dict):
+            continue
+        role = _safe_str(item.get("role"), max_len=32).lower()
+        content = _safe_str(item.get("content"))
+        if not content:
+            continue
+        if role == "user":
+            out.append({"role": "user", "parts": [content]})
+        elif role in ("model", "assistant", "ai"):
+            out.append({"role": "model", "parts": [content]})
+    return out
 
 
-def _json_fallback():
-    return jsonify({"response": "Sorry, kuch masla aa gaya. Dobara try karo."})
+def _new_session(session_id: str) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "created_at": _utc_now_iso(),
+        "messages": [],
+        "mood_history": [],
+        "memory_insights": [],
+    }
 
 
-def _json_quota_message():
-    return jsonify(
-        {
-            "response": "Yaar, abhi AI ki limit/quota khatam ho gayi hai. Thori dair baad dobara try karo."
-        }
-    )
+def _session_path(session_id: str) -> Path:
+    safe = "".join(c for c in session_id if c.isalnum() or c in "-_")
+    if not safe:
+        raise ValueError("invalid session")
+    return SESSIONS_DIR / f"{safe}.json"
 
 
-app = Flask(__name__)
-
-
-@app.get("/")
-def index():
-    return render_template("index.html")
-
-
-@app.post("/analyze-emotion")
-def analyze_emotion():
+def load_session_doc(session_id: str) -> dict[str, Any]:
+    path = _session_path(session_id)
+    if not path.exists():
+        return _new_session(session_id)
     try:
-        data = request.get_json(silent=True) or {}
-        message = _safe_str(data.get("message"))
-        if not message:
-            return jsonify({"emotion": "okay", "color": EMOTION_COLORS["okay"]})
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print("load_session_doc error:", e)
+        traceback.print_exc()
+        return _new_session(session_id)
+    data.setdefault("session_id", session_id)
+    data.setdefault("created_at", _utc_now_iso())
+    data.setdefault("messages", [])
+    data.setdefault("mood_history", [])
+    data.setdefault("memory_insights", [])
+    if not isinstance(data["messages"], list):
+        data["messages"] = []
+    if not isinstance(data["mood_history"], list):
+        data["mood_history"] = []
+    if not isinstance(data["memory_insights"], list):
+        data["memory_insights"] = []
+    return data
 
-        prompt = (
-            "Classify the emotion of the message into EXACTLY one label from this list:\n"
-            "anxiety, sad, stressed, angry, okay, happy\n\n"
-            "Output ONLY the single label.\n"
-            "No punctuation. No extra words.\n\n"
-            f"Message: {message}"
-        )
 
-        result = None
+def save_session_doc(doc: dict[str, Any]) -> None:
+    sid = _safe_str(doc.get("session_id"), max_len=80)
+    if not sid:
+        raise ValueError("missing session_id")
+    path = _session_path(sid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False, indent=2)
+
+
+def list_recent_sessions(limit: int = 5) -> list[dict[str, Any]]:
+    rows: list[tuple[float, Path]] = []
+    for p in SESSIONS_DIR.glob("*.json"):
+        try:
+            rows.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    rows.sort(key=lambda x: x[0], reverse=True)
+    out: list[dict[str, Any]] = []
+    for _, p in rows[:limit]:
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            out.append(
+                {
+                    "session_id": _safe_str(d.get("session_id")) or p.stem,
+                    "created_at": _safe_str(d.get("created_at")),
+                    "message_count": len(d.get("messages") or []),
+                }
+            )
+        except Exception:
+            continue
+    return out
+
+
+class MentalHealthAgent:
+    def __init__(self) -> None:
+        self.model = PRIMARY_MODEL
+        self.system_prompt = SYSTEM_PROMPT
+
+    def _generate_text(self, prompt: str, system: str | None = None) -> str:
         last_err: Exception | None = None
-        for name in _iter_model_names():
+        result_text = ""
+        for name in _iter_models():
             try:
-                model = genai.GenerativeModel(model_name=name)
-                result = model.generate_content(prompt)
-                last_err = None
-                break
+                kwargs: dict[str, Any] = {"model_name": name}
+                if system:
+                    kwargs["system_instruction"] = system
+                model = genai.GenerativeModel(**kwargs)
+                res = model.generate_content(prompt)
+                result_text = _safe_str(getattr(res, "text", ""), max_len=24000)
+                if result_text:
+                    return result_text
             except gexc.NotFound as e:
                 last_err = e
                 continue
             except gexc.ResourceExhausted as e:
                 print(e)
                 traceback.print_exc()
-                return jsonify({"emotion": "okay", "color": EMOTION_COLORS["okay"]})
+                raise
             except Exception as e:
-                msg = str(e)
-                if "exceeded your current quota" in msg.lower() or "quota exceeded" in msg.lower():
+                last_err = e
+                msg = str(e).lower()
+                if "quota" in msg or "exceeded" in msg:
                     print(e)
                     traceback.print_exc()
-                    return jsonify({"emotion": "okay", "color": EMOTION_COLORS["okay"]})
-                print(e)
-                traceback.print_exc()
-                return jsonify({"emotion": "okay", "color": EMOTION_COLORS["okay"]})
-
-        if result is None and last_err is not None:
+                raise
+        if last_err:
             raise last_err
+        return ""
 
-        label = _safe_str(getattr(result, "text", ""), max_len=40).lower()
-        label = label.replace(".", "").replace(":", "").strip()
-        label = label.split()[0] if label else "okay"
-        if label not in ALLOWED_EMOTIONS:
-            label = "okay"
+    def analyze_emotion(self, message: str) -> dict[str, Any]:
+        msg = _safe_str(message)
+        if not msg:
+            return {
+                "emotion": "okay",
+                "color": EMOTION_COLORS["okay"],
+                "urdu_label": URDU_LABELS["okay"],
+            }
 
-        return jsonify({"emotion": label, "color": EMOTION_COLORS[label]})
-    except gexc.ResourceExhausted as e:
-        print(e)
-        traceback.print_exc()
-        return jsonify({"emotion": "okay", "color": EMOTION_COLORS["okay"]})
-    except Exception as e:
-        print(e)
-        traceback.print_exc()
-        return jsonify({"emotion": "okay", "color": EMOTION_COLORS["okay"]})
-
-
-@app.post("/chat")
-def chat():
-    try:
-        data = request.get_json(silent=True) or {}
-        message = _safe_str(data.get("message"))
-        mood = data.get("mood", None)
-        history = data.get("history", [])
-        emotion = _safe_str(data.get("emotion"), max_len=24).lower() or "okay"
-        if emotion not in ALLOWED_EMOTIONS:
-            emotion = "okay"
-
-        if not message:
-            return _json_fallback()
+        prompt = (
+            "Classify the emotion into EXACTLY one word from:\n"
+            "anxiety, sad, stressed, angry, okay, happy\n\n"
+            "Output ONLY the single label. No punctuation. No explanation.\n\n"
+            f"Message: {msg}"
+        )
 
         try:
-            mood_int = int(mood) if mood is not None else None
-        except (TypeError, ValueError):
-            mood_int = None
+            label_raw = self._generate_text(prompt)
+        except Exception as e:
+            print("analyze_emotion:", e)
+            traceback.print_exc()
+            raise
+
+        label = label_raw.lower().replace(".", "").replace(":", "").strip().split()[0] if label_raw else "okay"
+        if label not in ALLOWED_EMOTIONS:
+            label = "okay"
+        return {
+            "emotion": label,
+            "color": EMOTION_COLORS[label],
+            "urdu_label": URDU_LABELS[label],
+        }
+
+    def generate_memory_insight(self, messages: list[dict[str, Any]]) -> str:
+        lines = []
+        for m in messages[-20:]:
+            if not isinstance(m, dict):
+                continue
+            r = _safe_str(m.get("role")).lower()
+            c = _safe_str(m.get("content"), max_len=400)
+            if not c:
+                continue
+            pref = "user" if r == "user" else "assistant"
+            lines.append(f"{pref}: {c}")
+        transcript = "\n".join(lines)
+        prompt = (
+            "Summarize the emotional theme and ONE concrete fact user shared in ONE short Urdu sentence "
+            "(Roman Urdu OK). Example: Tumne exam stress aur neend ki baat ki thi. "
+            "No quotes. Max 140 characters.\n\n"
+            f"Conversation:\n{transcript}"
+        )
+        try:
+            t = self._generate_text(prompt, system="You write brief Roman Urdu memory cues for therapists.")
+            t = _safe_str(t, max_len=280)
+            return t or ""
+        except Exception as e:
+            print("generate_memory_insight:", e)
+            traceback.print_exc()
+            return ""
+
+    def chat(
+        self,
+        message: str,
+        mood: int | None,
+        history: Any,
+        emotion: str,
+    ) -> dict[str, Any]:
+        msg = _safe_str(message)
+        if not msg:
+            return {"response": "", "suggested_exercise": "none", "memory_insight": None}
+
+        emo = _safe_str(emotion, max_len=24).lower() or "okay"
+        if emo not in ALLOWED_EMOTIONS:
+            emo = "okay"
+
+        mood_int = mood
         if mood_int is not None:
-            mood_int = max(1, min(10, mood_int))
+            try:
+                mood_int = int(mood_int)
+                mood_int = max(1, min(10, mood_int))
+            except (TypeError, ValueError):
+                mood_int = None
 
-        mood_context = str(mood_int) if mood_int is not None else "not provided"
-
-        contract = (
-            "Return ONLY valid JSON with keys: response, suggested_exercise. "
-            "suggested_exercise must be exactly one of: breathing, grounding, none. "
-            "No extra text outside JSON."
+        mood_ctx = str(mood_int) if mood_int is not None else "not provided"
+        exercise_hint = (
+            "Suggested exercise must be exactly one of: breathing, grounding, none. "
+            "Prefer breathing when anxiety/stressed/panic/neend; grounding when overwhelm/anger. "
+            "If mood numeric is below 5 or emotion is anxiety/sad/stressed, strongly prefer breathing or grounding over none."
+        )
+        schema = (
+            'Return ONLY valid JSON object with keys: "response", "suggested_exercise", "memory_insight". '
+            "memory_insight can be null or a very short Roman Urdu line about what to remember from this reply. "
+            f"{exercise_hint} "
+            'Example: {"response":"...","suggested_exercise":"none","memory_insight":null}'
         )
 
         prompt = (
-            f"Detected emotion tag: {emotion}\n"
-            f"User mood (1-10): {mood_context}\n"
-            f"User message: {message}\n\n"
-            f"{contract}"
+            f"Detected emotion tag: {emo}\n"
+            f"User mood (1-10): {mood_ctx}\n\n"
+            f"User message: {msg}\n\n"
+            f"{schema}"
         )
 
-        result = None
-        last_not_found: Exception | None = None
-        for name in _iter_model_names():
+        gh = _build_gemini_history(history)
+
+        raw = ""
+        for name in _iter_models():
             try:
                 model = genai.GenerativeModel(
                     model_name=name,
-                    system_instruction=CHAT_SYSTEM_PROMPT,
+                    system_instruction=self.system_prompt,
                 )
-                chat_session = model.start_chat(history=_build_gemini_history(history))
+                chat_session = model.start_chat(history=gh)
                 result = chat_session.send_message(prompt)
-                last_not_found = None
-                break
-            except gexc.NotFound as e:
-                last_not_found = e
+                raw = _safe_str(getattr(result, "text", ""), max_len=24000)
+                if raw:
+                    break
+            except gexc.NotFound:
                 continue
-            except gexc.ResourceExhausted as e:
-                print(e)
-                traceback.print_exc()
-                return _json_quota_message()
             except Exception as e:
-                # Some quota / billing errors may not surface as ResourceExhausted in all versions.
-                msg = str(e)
-                if "exceeded your current quota" in msg.lower() or "quota exceeded" in msg.lower():
-                    print(e)
-                    traceback.print_exc()
-                    return _json_quota_message()
-                print(e)
+                print("chat model error:", e)
                 traceback.print_exc()
-                return _json_fallback()
+                raise
 
-        if result is None and last_not_found is not None:
-            print(last_not_found)
-            traceback.print_exc()
-            return _json_fallback()
-
-        raw = _safe_str(getattr(result, "text", ""), max_len=20000)
-        if not raw:
-            try:
-                print("EMPTY_MODEL_TEXT:", repr(result))
-            except Exception:
-                print("EMPTY_MODEL_TEXT: (could not repr result)")
-
-        response_text = ""
         suggested = "none"
+        reply = ""
+        mem_line = None
 
         try:
-            candidate = _extract_first_json_object(raw)
-            obj = json.loads(candidate)
-            response_text = _safe_str(obj.get("response", ""))
-            suggested = _safe_str(obj.get("suggested_exercise", "none"), max_len=16).lower() or "none"
+            blob = _extract_first_json_object(raw)
+            obj = json.loads(blob)
+            reply = _safe_str(obj.get("response"))
+            suggested = _safe_str(obj.get("suggested_exercise", "none"), max_len=32).lower() or "none"
+            mem_line = obj.get("memory_insight")
+            if mem_line is not None:
+                mem_line = _safe_str(str(mem_line), max_len=400) or None
         except Exception:
-            # If model returned plain text, still show it and choose exercise heuristically
-            response_text = raw
+            reply = raw
 
         if suggested not in ALLOWED_EXERCISES:
             suggested = "none"
 
-        if suggested == "none":
-            lower = message.lower()
-            if emotion in ("anxiety", "stressed") or any(
-                k in lower for k in ("panic", "ghabra", "ghabr", "anx", "stress", "restless", "dil ghabra")
-            ):
-                suggested = "breathing"
-            elif emotion in ("angry", "sad") or any(k in lower for k in ("gussa", "angry", "sad", "udaas", "low")):
-                suggested = "grounding"
+        if mood_int is not None and mood_int < 5 and suggested == "none":
+            suggested = "breathing"
 
-        if not response_text:
-            try:
-                print("NO_RESPONSE_TEXT_RAW:", raw[:600])
-            except Exception:
-                print("NO_RESPONSE_TEXT_RAW: (unavailable)")
-            return _json_fallback()
+        lower = msg.lower()
+        if suggested == "none" and (
+            emo in ("anxiety", "stressed") or any(k in lower for k in ("panic", "ghabra", "anx", "stress", "neend", "panic"))
+        ):
+            suggested = "breathing"
+        elif suggested == "none" and (emo in ("angry", "sad") or any(k in lower for k in ("gussa", "akela", "udaas"))):
+            suggested = "grounding"
 
-        return jsonify({"response": response_text, "suggested_exercise": suggested})
+        if not reply:
+            reply = (
+                "Mujhay abhi jawab bnane mei masla aa raha hai. Dobara zaroor likho — mai sun rahi hun 🤍 "
+                "Agar emergency lagay to Umang: 0317-4288665."
+            )
+
+        return {
+            "response": reply.strip(),
+            "suggested_exercise": suggested,
+            "memory_insight": mem_line,
+        }
+
+
+agent = MentalHealthAgent()
+
+app = Flask(__name__)
+app.secret_key = os.urandom(24)
+CORS(app)
+
+
+@app.get("/")
+def index():
+    try:
+        sid = session.get("session_id") or str(uuid.uuid4())
+        session["session_id"] = sid
+        doc = load_session_doc(sid)
+        if not doc["messages"]:
+            greet = (
+                "Assalam o alaikum — main Sukoon AI hoon. Yahan judgement nahi, sirf ek safe space 🤍 "
+                "Aaj dil pe kya bojh hai? Batao, hum sun rhe hain."
+            )
+            doc["messages"].append(
+                {"role": "model", "content": greet, "timestamp": _utc_now_iso()},
+            )
+            save_session_doc(doc)
+
+        hist = []
+        for m in doc.get("messages", []):
+            if not isinstance(m, dict):
+                continue
+            hist.append(
+                {
+                    "role": m.get("role"),
+                    "content": m.get("content", ""),
+                    "timestamp": m.get("timestamp", ""),
+                }
+            )
+
+        latest_insight = ""
+        insights = doc.get("memory_insights") or []
+        if isinstance(insights, list) and insights:
+            latest_insight = _safe_str(insights[-1], max_len=500)
+
+        return render_template(
+            "index.html",
+            session_id=sid,
+            history=hist,
+            mood_history=doc.get("mood_history") or [],
+            latest_memory_insight=latest_insight,
+            recent_sessions=list_recent_sessions(5),
+        )
     except Exception as e:
-        print(e)
+        print("/ index error:", e)
         traceback.print_exc()
-        return _json_fallback()
+        return (
+            '<h2>Kuch masla aa gaya. Page reload karo.</h2>',
+            500,
+        )
+
+
+@app.get("/sessions")
+def get_sessions():
+    try:
+        return jsonify({"ok": True, "sessions": list_recent_sessions(5)})
+    except Exception as e:
+        print("GET /sessions:", e)
+        traceback.print_exc()
+        return jsonify(_friendly_error_payload("Seshen ki fehrist nahi khul saki.")), 500
+
+
+@app.get("/history")
+def get_history():
+    try:
+        sid = request.args.get("session_id") or session.get("session_id")
+        if not sid:
+            return jsonify(_friendly_error_payload("Session nahi mila.")), 400
+        sid = _safe_str(sid, max_len=80)
+        doc = load_session_doc(sid)
+        return jsonify({"ok": True, "session": doc})
+    except Exception as e:
+        print("GET /history:", e)
+        traceback.print_exc()
+        return jsonify(_friendly_error_payload("History nahi mili — dobara koshish karo.")), 500
+
+
+@app.post("/switch-session")
+def switch_session():
+    try:
+        data = request.get_json(silent=True) or {}
+        sid = _safe_str(data.get("session_id"), max_len=80)
+        if not sid:
+            return jsonify(_friendly_error_payload("Session ID chahiye.")), 400
+        session["session_id"] = sid
+        doc = load_session_doc(sid)
+        return jsonify({"ok": True, "session": doc})
+    except Exception as e:
+        print("POST /switch-session:", e)
+        traceback.print_exc()
+        return jsonify(_friendly_error_payload("Session switch masla — dobara koshish karo.")), 500
+
+
+@app.post("/analyze-emotion")
+def analyze_emotion_route():
+    try:
+        data = request.get_json(silent=True) or {}
+        msg = data.get("message", "")
+        out = agent.analyze_emotion(msg)
+        return jsonify(out)
+    except gexc.ResourceExhausted:
+        return jsonify(
+            {
+                "emotion": "okay",
+                "color": EMOTION_COLORS["okay"],
+                "urdu_label": URDU_LABELS["okay"],
+            }
+        )
+    except Exception as e:
+        print("/analyze-emotion:", e)
+        traceback.print_exc()
+        return jsonify(
+            _friendly_error_payload("Mahsoos karna abhi mamool par nahi chal sakta.")
+        ), 500
+
+
+@app.post("/chat")
+def chat_route():
+    ai_ts = _utc_now_iso()
+    try:
+        data = request.get_json(silent=True) or {}
+        message = data.get("message", "")
+        mood = data.get("mood")
+        emotion = data.get("emotion") or "okay"
+        sid = _safe_str(data.get("session_id"), max_len=80) or session.get("session_id")
+        if not sid:
+            sid = str(uuid.uuid4())
+        session["session_id"] = sid
+
+        msg = _safe_str(message)
+        if not msg:
+            return jsonify(
+                _friendly_error_payload("Pehlay koi pegham likho 🤍.")
+            ), 400
+
+        doc = load_session_doc(sid)
+
+        ts = _utc_now_iso()
+        try:
+            mood_val = int(mood) if mood is not None else None
+            if mood_val is not None:
+                mood_val = max(1, min(10, mood_val))
+        except (TypeError, ValueError):
+            mood_val = None
+
+        if mood_val is not None:
+            doc.setdefault("mood_history", []).append({"value": mood_val, "timestamp": ts})
+            mh = doc["mood_history"]
+            if isinstance(mh, list) and len(mh) > 30:
+                doc["mood_history"] = mh[-30:]
+
+        prior_msgs: list[dict[str, Any]] = []
+        for m in doc.get("messages", []) or []:
+            if isinstance(m, dict) and _safe_str(m.get("content")):
+                r = _safe_str(m.get("role")).lower()
+                if r not in ("user", "model"):
+                    continue
+                prior_msgs.append(
+                    {"role": "user" if r == "user" else "model", "content": _safe_str(m.get("content"))}
+                )
+
+        history_for_ai = prior_msgs[-40:]
+
+        user_entry = {"role": "user", "content": msg, "timestamp": ts}
+        doc.setdefault("messages", []).append(user_entry)
+
+        try:
+            ai_result = agent.chat(msg, mood_val, history_for_ai, emotion)
+            ai_ts = _utc_now_iso()
+            ai_text = ai_result["response"]
+        except gexc.ResourceExhausted:
+            ai_ts = _utc_now_iso()
+            ai_result = {
+                "response": (
+                    "Yaar AI ki quota / limit ki wajah se abhi jawab nahi aa sakta. "
+                    "Thori dair baad dubara try karo 🤍 Agar zaroorat ho Umang helpline 0317-4288665."
+                ),
+                "suggested_exercise": "breathing",
+                "memory_insight": None,
+            }
+            ai_text = ai_result["response"]
+
+        ai_entry = {
+            "role": "model",
+            "content": ai_text,
+            "timestamp": ai_ts,
+        }
+        doc["messages"].append(ai_entry)
+
+        mem_insights = doc.setdefault("memory_insights", [])
+        returned_insight = ai_result.get("memory_insight")
+        msgs = doc["messages"]
+        if len(msgs) > 0 and len(msgs) % 5 == 0:
+            generated = agent.generate_memory_insight(msgs)
+            if generated:
+                mem_insights.append(generated)
+                returned_insight = generated
+
+        save_session_doc(doc)
+
+        return jsonify(
+            {
+                "response": ai_text,
+                "suggested_exercise": ai_result.get("suggested_exercise") or "none",
+                "memory_insight": returned_insight,
+                "timestamp": ai_ts,
+            }
+        )
+    except Exception as e:
+        print("/chat:", e)
+        traceback.print_exc()
+        return jsonify(
+            _friendly_error_payload(
+                "Yaar internet check karo — server pe kuch masla aa gaya hai, dobara try karo 🤍."
+            )
+        ), 500
+
+
+@app.post("/clear-history")
+def clear_history_route():
+    try:
+        data = request.get_json(silent=True) or {}
+        sid = _safe_str(data.get("session_id"), max_len=80) or session.get("session_id")
+        if not sid:
+            return jsonify(_friendly_error_payload("Session nahi mila.")), 400
+
+        blank = _new_session(sid)
+        greet = (
+            "Sab saf ho gaya. Phir se shuru kartay hain — main yahan hun 🤍 "
+            "Aaj subah se sab se zyada kya chub raha hai?"
+        )
+        blank["messages"].append(
+            {"role": "model", "content": greet, "timestamp": _utc_now_iso()},
+        )
+        save_session_doc(blank)
+        return jsonify({"ok": True, "success": True, "session": blank})
+    except Exception as e:
+        print("/clear-history:", e)
+        traceback.print_exc()
+        return jsonify(_friendly_error_payload("Safai nahi ho saki — dobara try karo.")), 500
+
+
+@app.post("/clear-all-sessions")
+def clear_all_sessions_route():
+    try:
+        for p in SESSIONS_DIR.glob("*.json"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        new_sid = str(uuid.uuid4())
+        session["session_id"] = new_sid
+        doc = _new_session(new_sid)
+        greet = (
+            "Naya safe space shuru — main Sukoon AI hoon 🤍 "
+            "Jo bhi dil pe hai, araam se likho; hum saath hain."
+        )
+        doc["messages"].append({"role": "model", "content": greet, "timestamp": _utc_now_iso()})
+        save_session_doc(doc)
+        return jsonify({"ok": True, "success": True, "session_id": new_sid})
+    except Exception as e:
+        print("/clear-all-sessions:", e)
+        traceback.print_exc()
+        return jsonify(_friendly_error_payload("Sab saf nahi kar paye."))
 
 
 if __name__ == "__main__":

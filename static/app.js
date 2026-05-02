@@ -1,8 +1,24 @@
 (() => {
   const $ = (id) => document.getElementById(id);
 
+  let bootstrap = {};
+  try {
+    const el = $("sukoon-bootstrap");
+    bootstrap = JSON.parse((el && el.textContent) || "{}");
+  } catch (_) {
+    bootstrap = {};
+  }
+
+  let sessionId = bootstrap.session_id || "";
+
+  /** @type {{role:string,content:string,timestamp?:string}[]} */
+  let history = Array.isArray(bootstrap.history) ? bootstrap.history.slice() : [];
+  let moodSeries = Array.isArray(bootstrap.mood_history)
+    ? bootstrap.mood_history.map((m) => (m && typeof m.value === "number" ? m.value : null)).filter((n) => n != null)
+    : [];
+
   const chatEl = $("chat");
-  const typingEl = $("typing");
+  const typingIndicator = $("typingIndicator");
   const inputEl = $("messageInput");
   const sendBtn = $("sendBtn");
   const micBtn = $("micBtn");
@@ -12,24 +28,27 @@
   const moodValue = $("moodValue");
   const moodChart = $("moodChart");
   const emotionBadge = $("emotionBadge");
-  const emotionText = $("emotionText");
+  const emotionUrdu = $("emotionUrdu");
+  const emotionEmojiEl = $("emotionEmoji");
   const themeToggle = $("themeToggle");
-  const clearChatBtn = $("clearChatBtn");
-
-  const quotaBanner = $("quotaBanner");
-  const quotaBreathBtn = $("quotaBreathBtn");
-
-  const exerciseCard = $("exerciseCard");
-  const exerciseClose = $("exerciseClose");
-  const exerciseTitle = $("exerciseTitle");
-  const breathingBox = $("breathingBox");
-  const breathingText = $("breathingText");
-  const groundingBox = $("groundingBox");
+  const memoryBar = $("memoryBar");
+  const memoryInsightText = $("memoryInsightText");
+  const clearHistoryBtn = $("clearHistoryBtn");
+  const sidebar = $("historySidebar");
+  const sidebarBackdrop = $("sidebarBackdrop");
+  const openSidebarBtn = $("openSidebarBtn");
+  const sidebarClose = $("sidebarClose");
+  const sessionsList = $("sessionsList");
+  const clearAllSessionsBtn = $("clearAllSessionsBtn");
+  const exerciseBreathing = $("exerciseBreathing");
+  const exerciseGrounding = $("exerciseGrounding");
+  const breathCircle = $("breathCircle");
+  const breathPhaseText = $("breathPhaseText");
+  const breathToggleBtn = $("breathToggleBtn");
+  const hideBreathingBtn = $("hideBreathingBtn");
+  const hideGroundingBtn = $("hideGroundingBtn");
   const groundingList = $("groundingList");
-
-  const STORAGE_KEY = "sukoon_chat_history";
-  let history = [];
-  const moodSeries = [];
+  const groundingDone = $("groundingDone");
 
   const EMOJI_BY_MOOD = (n) => {
     if (n <= 3) return "😔";
@@ -38,153 +57,221 @@
     return "😊";
   };
 
-  const EMOTION_LABELS = {
-    anxiety: "Anxiety",
-    sad: "Sad",
-    stressed: "Stressed",
-    angry: "Angry",
-    okay: "Okay",
-    happy: "Happy",
+  const EMOTION_ICONS = {
+    anxiety: "😰",
+    sad: "😢",
+    stressed: "😤",
+    angry: "😡",
+    okay: "😐",
+    happy: "😊",
   };
 
-  // Auto-scroll (bulletproof): wait for DOM/layout, then snap to bottom
-  const scrollToBottom = (behavior = "smooth") => {
+  /**
+   * @param {number} mood
+   */
+  function ensureMoodPoint(mood) {
+    moodSeries.push(mood);
+    if (moodSeries.length > 10) moodSeries = moodSeries.slice(-10);
+  }
+
+  /** @type {SpeechRecognition | null} */
+  let recognition = null;
+  let listening = false;
+
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let breathTimers = null;
+  let breathingOn = false;
+
+  function padTime(d) {
+    const h = d.getHours().toString().padStart(2, "0");
+    const m = d.getMinutes().toString().padStart(2, "0");
+    return `${h}:${m}`;
+  }
+
+  function scrollChat(behavior = "smooth") {
     if (!chatEl) return;
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        chatEl.scrollTo({ top: chatEl.scrollHeight, behavior });
+      chatEl.scrollTo({ top: chatEl.scrollHeight, behavior });
+    });
+  }
+
+  function setTyping(on) {
+    if (!typingIndicator) return;
+    typingIndicator.classList.toggle("hidden", !on);
+    if (on) scrollChat();
+  }
+
+  function setMemoryBar(text) {
+    const t = String(text || "").trim();
+    if (!memoryBar || !memoryInsightText) return;
+    if (!t) {
+      memoryBar.classList.add("hidden");
+      memoryInsightText.textContent = "";
+      return;
+    }
+    memoryBar.classList.remove("hidden");
+    memoryInsightText.textContent = t;
+  }
+
+  function setEmotionUI(emotion, color, urduLabel) {
+    if (!emotionBadge || !emotionUrdu || !emotionEmojiEl) return;
+    const em = String(emotion || "okay").toLowerCase();
+    const col = color || "#34D399";
+    emotionBadge.style.setProperty("--emotion", col);
+    emotionUrdu.textContent = urduLabel || em;
+    emotionEmojiEl.textContent = EMOTION_ICONS[em] || EMOTION_ICONS.okay;
+  }
+
+  function hideExercises() {
+    exerciseBreathing && exerciseBreathing.classList.add("hidden");
+    exerciseGrounding && exerciseGrounding.classList.add("hidden");
+    groundingDone && groundingDone.classList.add("hidden");
+    stopBreathing();
+  }
+
+  function showExercise(kind) {
+    hideExercises();
+    if (kind === "breathing" && exerciseBreathing) {
+      exerciseBreathing.classList.remove("hidden");
+      if (breathPhaseText) breathPhaseText.textContent = "Taiyar?";
+      if (breathToggleBtn) breathToggleBtn.textContent = "Shuru karo";
+    } else if (kind === "grounding" && exerciseGrounding && groundingList) {
+      exerciseGrounding.classList.remove("hidden");
+      groundingList.innerHTML = "";
+      const rows = [
+        "5 cheezein dekho",
+        "4 cheezein chhuo",
+        "3 awaazein suno",
+        "2 cheezein sungho",
+        "1 cheez chkho",
+      ];
+      rows.forEach((txt) => {
+        const lbl = document.createElement("label");
+        const ck = document.createElement("input");
+        ck.type = "checkbox";
+        const sp = document.createElement("span");
+        sp.textContent = txt;
+        lbl.appendChild(ck);
+        lbl.appendChild(sp);
+        groundingList.appendChild(lbl);
+        ck.addEventListener("change", () => {
+          const boxes = groundingList.querySelectorAll('input[type="checkbox"]');
+          const ok = [...boxes].every((b) => b.checked);
+          if (groundingDone) groundingDone.classList.toggle("hidden", !ok);
+        });
       });
-    });
-  };
-
-  const setTyping = (on) => {
-    typingEl.classList.toggle("hidden", !on);
-    if (on) scrollToBottom();
-  };
-
-  const addMessage = (role, text, opts = {}) => {
-    const msg = document.createElement("div");
-    msg.className = "msg " + (role === "user" ? "msg-user" : "msg-ai");
-
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    bubble.textContent = text;
-
-    if (opts.isGreeting) bubble.classList.add("bubble-greeting");
-
-    msg.appendChild(bubble);
-    chatEl.appendChild(msg);
-    scrollToBottom();
-  };
-
-  const saveHistory = () => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-    } catch (e) {
-      // ignore storage errors (private mode / quota)
     }
-  };
+  }
 
-  const pushHistory = (role, content) => {
-    history.push({ role, content });
-    if (history.length > 60) history.splice(0, history.length - 60);
-    saveHistory();
-  };
+  function stopBreathing() {
+    breathingOn = false;
+    if (breathTimers) clearTimeout(breathTimers);
+    breathTimers = null;
+    if (breathCircle) breathCircle.classList.remove("animating");
+    if (breathToggleBtn) breathToggleBtn.textContent = "Shuru karo";
+  }
 
-  const loadHistory = () => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter((m) => m && typeof m === "object")
-        .map((m) => ({
-          role: String(m.role || ""),
-          content: String(m.content || ""),
-        }))
-        .filter((m) => (m.role === "user" || m.role === "model") && m.content.trim().length > 0)
-        .slice(-60);
-    } catch (e) {
-      return [];
-    }
-  };
+  /**
+   * @param {boolean} forceStart
+   */
+  function toggleBreathing(forceStart) {
+    if (!breathCircle || !breathPhaseText) return;
 
-  const renderHistory = (items) => {
-    if (!chatEl) return;
-    chatEl.innerHTML = "";
-    items.forEach((m, idx) => {
-      const uiRole = m.role === "user" ? "user" : "ai";
-      addMessage(uiRole, m.content, { isGreeting: idx === 0 && uiRole === "ai" });
-    });
-    scrollToBottom("auto");
-  };
+    const start = typeof forceStart === "boolean" ? forceStart : !breathingOn;
+    stopBreathing();
+    if (!start) return;
+    breathingOn = true;
 
-  const getMood = () => {
-    const n = parseInt(moodSlider.value, 10);
-    return Number.isFinite(n) ? n : 6;
-  };
+    breathToggleBtn && (breathToggleBtn.textContent = "Roko");
+    breathCircle.classList.add("animating");
 
-  const updateMoodUI = () => {
+    const phases = [
+      { txt: "Saans lo...", ms: 4000 },
+      { txt: "Roko...", ms: 4000 },
+      { txt: "Chhodo...", ms: 6000 },
+    ];
+    let i = -1;
+
+    const next = () => {
+      i = (i + 1) % phases.length;
+      breathPhaseText.textContent = phases[i].txt;
+      breathTimers = setTimeout(next, phases[i].ms);
+    };
+    next();
+  }
+
+  function getMood() {
+    if (!moodSlider) return 6;
+    const v = parseInt(moodSlider.value, 10);
+    return Number.isFinite(v) ? v : 6;
+  }
+
+  function updateMoodUI() {
+    if (!moodEmoji || !moodValue || !moodSlider) return;
     const n = getMood();
     moodEmoji.textContent = EMOJI_BY_MOOD(n);
     moodValue.textContent = String(n);
-    updateMoodTrack(n);
-  };
+    moodSlider.style.background = `linear-gradient(90deg, hsl(${210 - n * 6},72%,52%), hsl(${45 + n * 2},78%,54%))`;
+  }
 
-  const lerp = (a, b, t) => a + (b - a) * t;
-  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  let chartResizeObs = null;
 
-  // Mood slider: blue (1) -> gold (10)
-  const updateMoodTrack = (n) => {
-    const t = clamp01((n - 1) / 9);
-    // hsl: 210 (blue) -> 45 (gold)
-    const hue = lerp(210, 45, t);
-    const c1 = `hsla(${hue}, 92%, 60%, 0.95)`;
-    const c2 = `hsla(${lerp(250, 50, t)}, 90%, 62%, 0.70)`;
-    moodSlider.style.background = `linear-gradient(90deg, ${c1}, ${c2})`;
-  };
-
-  const setEmotionBadge = (emotion, color) => {
-    const safeEmotion = EMOTION_LABELS[emotion] ? emotion : "okay";
-    emotionText.textContent = EMOTION_LABELS[safeEmotion] || "Okay";
-    emotionBadge.style.setProperty("--badge", color || "#34D399");
-  };
-
-  const drawMoodChart = () => {
+  function resizeCanvasPixels() {
+    if (!moodChart) return;
+    const cssW = moodChart.clientWidth || 300;
+    const cssH = 80;
+    const dpr = window.devicePixelRatio || 1;
+    moodChart.width = Math.round(cssW * dpr);
+    moodChart.height = Math.round(cssH * dpr);
     const ctx = moodChart.getContext("2d");
     if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawMoodChart();
+  }
 
-    const w = moodChart.width;
-    const h = moodChart.height;
+  function drawMoodChart() {
+    if (!moodChart) return;
+    const ctx = moodChart.getContext("2d");
+    if (!ctx) return;
+    const w = moodChart.clientWidth || 300;
+    const h = 80;
+
     ctx.clearRect(0, 0, w, h);
-
-    // background
     ctx.globalAlpha = 1;
-    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    ctx.fillStyle =
+      document.body.classList.contains("theme-light") ? "rgba(15,23,42,0.04)" : "rgba(148,163,184,0.06)";
     ctx.fillRect(0, 0, w, h);
 
-    const data = moodSeries.slice(-10);
-    if (data.length < 2) {
-      // baseline dot
-      ctx.fillStyle = "rgba(124,58,237,0.8)";
+    for (let g = 1; g < 10; g++) {
+      const gy = ((g - 1) / 9) * (h - 16) + 8;
+      ctx.strokeStyle = "rgba(124,58,237,0.08)";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(w - 10, h / 2, 3, 0, Math.PI * 2);
+      ctx.moveTo(8, gy);
+      ctx.lineTo(w - 8, gy);
+      ctx.stroke();
+    }
+
+    const pts = moodSeries.slice(-10);
+    if (pts.length < 2) {
+      ctx.fillStyle = "#7c3aed";
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.arc(w - 16, h / 2, 4, 0, Math.PI * 2);
       ctx.fill();
       return;
     }
 
-    const pad = 6;
-    const xStep = (w - pad * 2) / (data.length - 1);
-    const yMap = (v) => {
-      const t = (v - 1) / 9; // 0..1
-      return h - pad - t * (h - pad * 2);
-    };
+    const n = pts.length - 1;
+    const pad = 10;
+    const xStep = (w - pad * 2) / n;
+    const yMap = (v) => h - pad - ((v - 1) / 9) * (h - pad * 2);
 
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(124,58,237,0.95)";
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = "#7c3aed";
+    ctx.lineJoin = "round";
     ctx.beginPath();
-    data.forEach((v, i) => {
+    pts.forEach((v, i) => {
       const x = pad + i * xStep;
       const y = yMap(v);
       if (i === 0) ctx.moveTo(x, y);
@@ -192,338 +279,494 @@
     });
     ctx.stroke();
 
-    // points
-    ctx.fillStyle = "rgba(13,148,136,0.95)";
-    data.forEach((v, i) => {
+    pts.forEach((v, i) => {
       const x = pad + i * xStep;
       const y = yMap(v);
       ctx.beginPath();
-      ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+      ctx.arc(x, y, 4.4, 0, Math.PI * 2);
+      ctx.fillStyle = "#0d9488";
       ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
     });
-  };
+  }
 
-  const updateMoodSeries = (mood) => {
-    moodSeries.push(mood);
-    if (moodSeries.length > 10) moodSeries.splice(0, moodSeries.length - 10);
-    drawMoodChart();
-  };
+  /** @type {{role:string,content:string}[]} */
+  function historyForPayload() {
+    return history.slice(-40).map((m) => ({
+      role: m.role === "user" ? "user" : "model",
+      content: String(m.content || ""),
+    }));
+  }
 
-  const showExercise = (kind) => {
-    exerciseCard.classList.remove("hidden");
-    breathingBox.classList.toggle("hidden", kind !== "breathing");
-    groundingBox.classList.toggle("hidden", kind !== "grounding");
+  function addAiBubble(content, stamp) {
+    if (!chatEl) return;
+    const row = document.createElement("article");
+    row.className = "msg msg-ai";
+    const wrap = document.createElement("div");
+    wrap.className = "bubble-inner";
+    wrap.innerHTML = `<div class="avatar" aria-hidden="true">🧠</div>`;
+    const p = document.createElement("div");
+    p.className = "bubble-text-wrap";
+    const text = document.createElement("p");
+    text.className = "bubble-text";
+    text.textContent = content;
+    const meta = document.createElement("time");
+    meta.className = "bubble-meta";
+    meta.textContent = stamp || "";
+    p.appendChild(text);
+    p.appendChild(meta);
+    wrap.appendChild(p);
+    row.appendChild(wrap);
+    chatEl.appendChild(row);
+    scrollChat();
+  }
 
-    if (kind === "breathing") {
-      exerciseTitle.textContent = "Breathing exercise";
-      startBreathingCycle();
-    } else if (kind === "grounding") {
-      exerciseTitle.textContent = "Grounding exercise";
-      renderGroundingChecklist();
+  function addUserBubble(content, stamp) {
+    if (!chatEl) return;
+    const row = document.createElement("article");
+    row.className = "msg msg-user";
+    const b = document.createElement("div");
+    b.className = "bubble";
+    b.innerHTML =
+      `<div class="bubble-body"></div>` + `<span class="bubble-meta">${stamp || ""}</span>`;
+    const body = b.querySelector(".bubble-body");
+    body.textContent = content;
+    row.appendChild(b);
+    chatEl.appendChild(row);
+    scrollChat();
+  }
+
+  function renderHistory(entries) {
+    if (!chatEl) return;
+    chatEl.innerHTML = "";
+    history = [];
+
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      const role = String(entry.role || "");
+      const c = String(entry.content || "").trim();
+      if (!c) return;
+      const ts = entry.timestamp ? new Date(entry.timestamp) : new Date();
+      const stamp = Number.isFinite(ts.getTime()) ? padTime(ts) : "";
+
+      history.push({
+        role: role === "user" ? "user" : "model",
+        content: c,
+        timestamp: entry.timestamp || "",
+      });
+
+      if (role === "user") addUserBubble(c, stamp);
+      else addAiBubble(c, stamp);
+    });
+    scrollChat("auto");
+  }
+
+  async function hydrateFromServer() {
+    try {
+      const res = await fetch(`/history?session_id=${encodeURIComponent(sessionId)}`, {
+        credentials: "same-origin",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.session) return;
+      sessionId = data.session.session_id || sessionId;
+
+      moodSeries =
+        Array.isArray(data.session.mood_history) && data.session.mood_history.length
+          ? data.session.mood_history.map((x) => x.value).filter((x) => typeof x === "number")
+          : moodSeries.slice();
+
+      moodSeries.length > 10 && (moodSeries = moodSeries.slice(-10));
+
+      const msgs = Array.isArray(data.session.messages) ? data.session.messages : [];
+
+      renderHistory(
+        msgs.map((m) => ({
+          role: m.role === "user" ? "user" : "model",
+          content: m.content,
+          timestamp: m.timestamp,
+        })),
+      );
+
+      const ins = Array.isArray(data.session.memory_insights)
+        ? data.session.memory_insights.filter(Boolean).pop()
+        : "";
+      if (typeof ins === "string" && ins) setMemoryBar(ins);
+      else if (bootstrap.latest_memory_insight) setMemoryBar(bootstrap.latest_memory_insight);
+
+      resizeCanvasPixels();
+      updateMoodUI();
+    } catch (_) {
+      setMemoryBar(bootstrap.latest_memory_insight || "");
     }
-  };
+  }
 
-  const hideExercise = () => {
-    exerciseCard.classList.add("hidden");
-    breathingBox.classList.add("hidden");
-    groundingBox.classList.add("hidden");
-  };
-
-  const showQuotaBanner = (show) => {
-    if (!quotaBanner) return;
-    quotaBanner.classList.toggle("hidden", !show);
-    if (show) scrollToBottom("auto");
-  };
-
-  const isQuotaMessage = (text) => {
-    const t = String(text || "").toLowerCase();
-    return t.includes("quota") || t.includes("limit") || t.includes("resting for a moment");
-  };
-
-  const renderGroundingChecklist = () => {
-    const items = [
-      "5 cheezein dekho",
-      "4 cheezein chhuo",
-      "3 awaazein suno",
-      "2 cheezein sungho",
-      "1 cheez chkho",
-    ];
-    groundingList.innerHTML = "";
-    items.forEach((label) => {
-      const row = document.createElement("label");
-      row.className = "check";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      const text = document.createElement("span");
-      text.textContent = label;
-      row.appendChild(cb);
-      row.appendChild(text);
-      groundingList.appendChild(row);
-    });
-  };
-
-  let breathingTimer = null;
-  const startBreathingCycle = () => {
-    if (breathingTimer) clearInterval(breathingTimer);
-
-    const phases = [
-      { text: "Saans lo...", ms: 4000 },
-      { text: "Roko...", ms: 4000 },
-      { text: "Chhodo...", ms: 6000 },
-    ];
-
-    let idx = 0;
-    let remaining = phases[0].ms;
-    breathingText.textContent = phases[0].text;
-
-    breathingTimer = setInterval(() => {
-      remaining -= 250;
-      if (remaining <= 0) {
-        idx = (idx + 1) % phases.length;
-        breathingText.textContent = phases[idx].text;
-        remaining = phases[idx].ms;
-      }
-    }, 250);
-  };
-
-  const applyTheme = (theme) => {
-    const t = theme === "light" ? "light" : "dark";
-    document.body.classList.toggle("theme-light", t === "light");
-    document.body.classList.toggle("theme-dark", t === "dark");
-    localStorage.setItem("sukoon_theme", t);
-  };
-
-  const initTheme = () => {
-    const saved = localStorage.getItem("sukoon_theme");
-    applyTheme(saved || "dark");
-  };
-
-  const analyzeEmotion = async (message) => {
+  async function analyzeEmotion(message) {
     const res = await fetch("/analyze-emotion", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data && (data.error || data.response)) || "Emotion analyze failed");
+    if (!res.ok) throw new Error(data.error || "emotion");
     return data;
-  };
+  }
 
-  const chatRequest = async ({ message, mood, emotion }) => {
+  async function chatRequest(payload) {
     const res = await fetch("/chat", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        mood,
-        emotion,
-        history,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data && (data.error || data.response)) || "Chat failed");
+    if (!res.ok) throw new Error(data.error || "chat");
     return data;
-  };
+  }
 
-  const sendMessage = async (text) => {
-    const message = (text || "").trim();
-    if (!message) return;
+  async function sendMessage(rawText) {
+    const text = String(rawText || "").trim();
+    if (!text || !inputEl || !sendBtn || !chatEl) return;
 
-    hideExercise();
-    showQuotaBanner(false);
+    hideExercises();
 
-    addMessage("user", message);
-    pushHistory("user", message);
-
-    const mood = getMood();
-    updateMoodSeries(mood);
-    updateMoodUI();
+    const now = padTime(new Date());
+    addUserBubble(text, now);
+    history.push({
+      role: "user",
+      content: text,
+      timestamp: new Date().toISOString(),
+    });
 
     inputEl.value = "";
-    inputEl.focus();
+    const moodVal = getMood();
+    ensureMoodPoint(moodVal);
+    resizeCanvasPixels();
 
-    setTyping(true);
     sendBtn.disabled = true;
+    setTyping(true);
 
     try {
-      const emo = await analyzeEmotion(message);
-      const emotion = String(emo.emotion || "okay");
-      const color = String(emo.color || "#34D399");
-      setEmotionBadge(emotion, color);
+      const emotionData = await analyzeEmotion(text);
+      const emotionKey = String(emotionData.emotion || "okay");
+      const col = emotionData.color || "#34D399";
+      const urd = emotionData.urdu_label || "";
+      setEmotionUI(emotionKey, col, urd);
 
-      const data = await chatRequest({ message, mood, emotion });
-      const reply = String(data.response || "").trim() || "Sorry, kuch masla aa gaya. Dobara try karo.";
-      if (isQuotaMessage(reply)) {
-        showQuotaBanner(true);
-      }
-      addMessage("ai", reply);
-      pushHistory("model", reply);
+      const data = await chatRequest({
+        message: text,
+        mood: moodVal,
+        history: historyForPayload(),
+        emotion: emotionKey,
+        session_id: sessionId,
+      });
+
+      const reply = String(data.response || "").trim();
+      const stamp = padTime(data.timestamp ? new Date(data.timestamp) : new Date());
+      addAiBubble(reply || "Kuch masla aa gaya, dobara try karo.", stamp);
+      history.push({
+        role: "model",
+        content: reply,
+        timestamp: data.timestamp || new Date().toISOString(),
+      });
+
+      if (data.memory_insight) setMemoryBar(data.memory_insight);
 
       const ex = String(data.suggested_exercise || "none");
-      if (ex === "breathing" || ex === "grounding") {
-        showExercise(ex);
-      }
+      if (ex === "breathing" || ex === "grounding") showExercise(ex);
     } catch (e) {
-      const err = "Yaar, network masla hai. Dobara try karo.";
-      addMessage("ai", err);
-      pushHistory("model", err);
+      const net = !navigator.onLine || String(e.message || e).toLowerCase().includes("failed to fetch");
+      const errText = net
+        ? "Yaar internet check karo 🤍"
+        : "Kuch masla aa gaya, dobara try karo.";
+      addAiBubble(errText, padTime(new Date()));
+      history.push({ role: "model", content: errText, timestamp: new Date().toISOString() });
     } finally {
       setTyping(false);
       sendBtn.disabled = false;
+      resizeCanvasPixels();
+      updateMoodUI();
+      inputEl.focus();
     }
-  };
+  }
 
-  // Voice input (Web Speech API)
-  let recognition = null;
-  let isListening = false;
+  function applyTheme(next) {
+    const t = next === "light" ? "light" : "dark";
+    document.body.classList.toggle("theme-light", t === "light");
+    document.body.classList.toggle("theme-dark", t === "dark");
+    localStorage.setItem("sukoon_theme", t);
+    if (themeToggle) themeToggle.textContent = t === "light" ? "🌙" : "☀️";
+  }
 
-  const setMicStatus = (text) => {
-    micStatus.textContent = text || "";
-  };
+  function initTheme() {
+    const saved = localStorage.getItem("sukoon_theme");
+    applyTheme(saved === "light" ? "light" : "dark");
+  }
 
-  const setupSpeech = () => {
+  function setupSpeech() {
+    if (!micBtn || !inputEl) return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       micBtn.disabled = true;
-      setMicStatus("Voice input not supported in this browser.");
+      if (micStatus) micStatus.textContent = "Voice is not supported in this browser.";
       return;
     }
-
     recognition = new SR();
     recognition.interimResults = true;
     recognition.continuous = false;
-
-    const tryLang = (lang) => {
-      recognition.lang = lang;
-    };
-
-    tryLang("ur-PK");
+    recognition.lang = "ur-PK";
 
     recognition.onstart = () => {
-      isListening = true;
-      micBtn.classList.add("active");
-      setMicStatus("Sun raha hun...");
+      listening = true;
+      micBtn.classList.add("listening");
+      if (micStatus) micStatus.textContent = "Sun raha hun...";
     };
-
     recognition.onend = () => {
-      isListening = false;
-      micBtn.classList.remove("active");
-      setMicStatus("");
+      listening = false;
+      micBtn.classList.remove("listening");
+      if (micStatus) micStatus.textContent = "";
     };
-
     recognition.onerror = (ev) => {
-      // fallback language for common cases
       if (String(ev.error || "").toLowerCase().includes("language")) {
-        tryLang("en-US");
+        try {
+          recognition.lang = "en-US";
+        } catch (_) {}
       }
-      setMicStatus("Voice error. Try again.");
+      if (micStatus) micStatus.textContent = "Voice error. Try again.";
     };
-
     recognition.onresult = (ev) => {
-      let finalText = "";
-      let interim = "";
+      let finalT = "";
+      let inter = "";
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i];
         const t = r[0] && r[0].transcript ? r[0].transcript : "";
-        if (r.isFinal) finalText += t;
-        else interim += t;
+        if (r.isFinal) finalT += t;
+        else inter += t;
       }
-
-      const combined = (finalText || interim || "").trim();
-      if (combined) inputEl.value = combined;
+      const out = (finalT || inter || "").trim();
+      if (out) inputEl.value = out;
     };
-  };
 
-  const bootGreeting = () => {
-    const greet =
-      "Assalam o alaikum. Main Sukoon AI hoon — aap ka haal kaisa hai? " +
-      "Aap jo bhi feel kar rahe hain, main yahan hoon. Aaj aap ko kis cheez ne sab se zyada affect kiya?";
-    addMessage("ai", greet);
-    pushHistory("model", greet);
-  };
+    micBtn.addEventListener("click", () => {
+      if (!recognition) return;
+      if (listening) {
+        recognition.stop();
+        return;
+      }
+      try {
+        recognition.start();
+      } catch (_) {
+        if (micStatus) micStatus.textContent = "Voice error. Try again.";
+      }
+    });
+  }
 
-  // Wire events
-  moodSlider.addEventListener("input", () => {
-    updateMoodUI();
-  });
+  function openSidebar() {
+    sidebar && sidebar.classList.add("open");
+    sidebarBackdrop && sidebarBackdrop.classList.remove("hidden");
+    sidebar && sidebar.setAttribute("aria-hidden", "false");
+    loadSessionsList();
+  }
 
-  sendBtn.addEventListener("click", () => sendMessage(inputEl.value));
-  inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") sendMessage(inputEl.value);
-  });
+  function closeSidebar() {
+    sidebar && sidebar.classList.remove("open");
+    sidebarBackdrop && sidebarBackdrop.classList.add("hidden");
+    sidebar && sidebar.setAttribute("aria-hidden", "true");
+  }
+
+  async function loadSessionsList() {
+    if (!sessionsList) return;
+    sessionsList.innerHTML = "Load ho rahi hai…";
+    try {
+      const res = await fetch("/sessions", { credentials: "same-origin" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.sessions) {
+        sessionsList.textContent = "List nahi mili.";
+        return;
+      }
+      sessionsList.innerHTML = "";
+      data.sessions.forEach((row) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "session-card";
+        const stamp = row.created_at
+          ? new Date(row.created_at).toLocaleString(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "?";
+        btn.innerHTML = `<span class="session-meta">${stamp}</span><span>#${(
+          row.session_id || ""
+        ).slice(0, 8)}… · msgs ${row.message_count ?? 0}</span>`;
+        btn.addEventListener("click", async () => {
+          await switchSession(row.session_id);
+        });
+        sessionsList.appendChild(btn);
+      });
+      if (!data.sessions.length) sessionsList.textContent = "Koi session nahi.";
+    } catch (_) {
+      sessionsList.textContent = "Network masla.";
+    }
+  }
+
+  async function switchSession(sid) {
+    try {
+      const res = await fetch("/switch-session", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.session) return;
+      sessionId = data.session.session_id;
+      bootstrap.session_id = sessionId;
+      closeSidebar();
+
+      moodSeries =
+        Array.isArray(data.session.mood_history) && data.session.mood_history.length
+          ? data.session.mood_history.map((x) => x.value).filter((x) => typeof x === "number")
+          : [];
+      moodSeries.length > 10 && (moodSeries = moodSeries.slice(-10));
+
+      const msgs = data.session.messages || [];
+      renderHistory(
+        msgs.map((m) => ({
+          role: m.role === "user" ? "user" : "model",
+          content: m.content,
+          timestamp: m.timestamp,
+        })),
+      );
+
+      const ins = Array.isArray(data.session.memory_insights)
+        ? data.session.memory_insights.filter(Boolean).pop()
+        : "";
+      setMemoryBar(typeof ins === "string" ? ins : "");
+
+      resizeCanvasPixels();
+    } catch (_) {}
+  }
+
+  async function clearCurrentHistory() {
+    try {
+      const res = await fetch("/clear-history", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.session) return;
+      sessionId = data.session.session_id;
+      moodSeries = [];
+      hideExercises();
+      setMemoryBar("");
+
+      const msgs = Array.isArray(data.session.messages) ? data.session.messages : [];
+      renderHistory(
+        msgs.map((m) => ({
+          role: m.role === "user" ? "user" : "model",
+          content: m.content,
+          timestamp: m.timestamp,
+        })),
+      );
+
+      resizeCanvasPixels();
+      updateMoodUI();
+    } catch (_) {}
+  }
+
+  async function clearAllSessions() {
+    if (!confirm("Sab sessions hamesha ke liye saf ho jayengi. Theek hai?")) return;
+    try {
+      const res = await fetch("/clear-all-sessions", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.session_id) return;
+      sessionId = data.session_id;
+      await hydrateFromServer();
+      closeSidebar();
+    } catch (_) {}
+  }
+
+  /* Wire */
+  sendBtn &&
+    sendBtn.addEventListener("click", () => {
+      sendMessage(inputEl.value);
+    });
+
+  inputEl &&
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage(inputEl.value);
+      }
+    });
+
+  moodSlider &&
+    moodSlider.addEventListener("input", () => {
+      updateMoodUI();
+    });
+
+  themeToggle &&
+    themeToggle.addEventListener("click", () => {
+      applyTheme(document.body.classList.contains("theme-light") ? "dark" : "light");
+      resizeCanvasPixels();
+      drawMoodChart();
+    });
+
+  clearHistoryBtn && clearHistoryBtn.addEventListener("click", clearCurrentHistory);
+
+  openSidebarBtn && openSidebarBtn.addEventListener("click", openSidebar);
+  sidebarClose && sidebarClose.addEventListener("click", closeSidebar);
+  sidebarBackdrop && sidebarBackdrop.addEventListener("click", closeSidebar);
+
+  clearAllSessionsBtn && clearAllSessionsBtn.addEventListener("click", clearAllSessions);
 
   document.querySelectorAll(".chip").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const prompt = btn.getAttribute("data-prompt") || "";
-      sendMessage(prompt);
+    btn.addEventListener("click", () => sendMessage(btn.getAttribute("data-prompt") || ""));
+  });
+
+  hideBreathingBtn && hideBreathingBtn.addEventListener("click", hideExercises);
+  hideGroundingBtn && hideGroundingBtn.addEventListener("click", hideExercises);
+
+  breathToggleBtn &&
+    breathToggleBtn.addEventListener("click", () => {
+      if (breathingOn) stopBreathing();
+      else toggleBreathing(true);
     });
-  });
 
-  themeToggle.addEventListener("click", () => {
-    const isLight = document.body.classList.contains("theme-light");
-    applyTheme(isLight ? "dark" : "light");
-    drawMoodChart();
-  });
-
-  exerciseClose.addEventListener("click", () => hideExercise());
-
-  micBtn.addEventListener("click", async () => {
-    if (!recognition) return;
-    if (isListening) {
-      recognition.stop();
-      return;
-    }
-
-    // Microphone permission is handled by the browser when starting recognition
-    try {
-      recognition.start();
-    } catch (e) {
-      setMicStatus("Voice error. Try again.");
-    }
-  });
-
-  if (quotaBreathBtn) {
-    quotaBreathBtn.addEventListener("click", () => {
-      showExercise("breathing");
-      showQuotaBanner(false);
-    });
-  }
-
-  const bootGreeting = () => {
-    const greet =
-      "Assalam o alaikum. Main Sukoon AI hoon — aap ka haal kaisa hai? " +
-      "Jo bhi aap feel kar rahe hain, yahan safe space hai. Aaj aap ko kis cheez ne sab se zyada affect kiya?";
-    addMessage("ai", greet, { isGreeting: true });
-    pushHistory("model", greet);
-  };
-
-  const clearChat = () => {
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (e) {}
-    history = [];
-    if (chatEl) chatEl.innerHTML = "";
-    hideExercise();
-    showQuotaBanner(false);
-    bootGreeting();
-  };
-
-  if (clearChatBtn) {
-    clearChatBtn.addEventListener("click", () => clearChat());
-  }
-
-  // Init
+  /* Init */
   initTheme();
   setupSpeech();
-  updateMoodUI();
-  updateMoodSeries(getMood());
+  setEmotionUI("okay", "#34D399", "ٹھیک");
+  setMemoryBar(bootstrap.latest_memory_insight || "");
 
-  // Load persisted chat on startup
-  history = loadHistory();
-  if (history.length > 0) {
+  if (history.length) {
     renderHistory(history);
   } else {
-    bootGreeting();
+    renderHistory([]);
+  }
+
+  updateMoodUI();
+
+  window.addEventListener("resize", () => {
+    resizeCanvasPixels();
+  });
+
+  resizeCanvasPixels();
+  hydrateFromServer();
+
+  if (chartResizeObs && chartResizeObs.disconnect) chartResizeObs.disconnect();
+  if (window.ResizeObserver && moodChart) {
+    chartResizeObs = new ResizeObserver(() => resizeCanvasPixels());
+    chartResizeObs.observe(moodChart);
   }
 })();
-

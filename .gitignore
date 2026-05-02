@@ -2,8 +2,5 @@
 venv/
 __pycache__/
 *.pyc
-*.pyo
+data/sessions/
 .DS_Store
-*.egg-info/
-dist/
-build/
