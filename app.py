@@ -43,11 +43,14 @@ SESSIONS_DIR = DATA_DIR / "sessions"
 
 
 def ensure_sessions_directory() -> None:
-    """Always ensure session JSON directory exists on disk (Docker / ephemeral fs safe)."""
+    """Always ensure session + profile dirs exist on disk (Docker / ephemeral fs safe)."""
     os.makedirs(DATA_DIR / "sessions", exist_ok=True)
+    os.makedirs(DATA_DIR / "profiles", exist_ok=True)
 
 
 ensure_sessions_directory()
+
+from agents import EmotionAgent, OrchestratorAgent
 
 PRIMARY_MODEL = "gemini-1.5-flash"
 QUOTA_FALLBACK_MODEL = "gemini-1.5-flash-8b"
@@ -672,6 +675,7 @@ def build_weekly_insights_for_pdf(doc: dict[str, Any], ai: dict[str, Any]) -> di
 
 
 agent = MentalHealthAgent()
+orchestrator = OrchestratorAgent()
 
 app = Flask(__name__)
 _secret = os.environ.get("FLASK_SECRET_KEY")
@@ -748,10 +752,23 @@ def switch_session():
 def analyze_emotion_route():
     try:
         data = request.get_json(silent=True) or {}
-        # Clients may send session_id for correlation (persists in localStorage).
         msg = data.get("message", "")
-        out = agent.analyze_emotion(msg)
-        return jsonify(out)
+        mood_raw = data.get("mood")
+        mood_val: int | None = None
+        try:
+            if mood_raw is not None:
+                mood_val = max(1, min(10, int(mood_raw)))
+        except (TypeError, ValueError):
+            mood_val = None
+        ea = EmotionAgent()
+        deep = ea.analyze(msg, [], mood_val)
+        return jsonify(
+            {
+                "emotion": deep.get("primary_emotion", "okay"),
+                "color": deep.get("color", EMOTION_COLORS.get("okay", "#34D399")),
+                "urdu_label": deep.get("urdu_label", URDU_LABELS.get("okay", "ٹھیک")),
+            }
+        )
     except Exception as e:
         print("/analyze-emotion:", e)
         traceback.print_exc()
@@ -768,7 +785,6 @@ def chat_route():
         data = request.get_json(silent=True) or {}
         message = data.get("message", "")
         mood = data.get("mood")
-        emotion = data.get("emotion") or "okay"
         sid = _safe_str(data.get("session_id"), max_len=80) or session.get("session_id")
         if not sid:
             sid = str(uuid.uuid4())
@@ -816,34 +832,43 @@ def chat_route():
         with open(session_file, "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, indent=2)
 
-        try:
-            ai_result = agent.chat(msg, mood_val, history_for_ai, emotion)
-            ai_ts = _utc_now_iso()
-            ai_text = ai_result["response"]
-        except GeminiQuotaExhaustedError:
-            ai_ts = _utc_now_iso()
-            ai_result = dict(RATE_LIMIT_CHAT)
-            ai_text = ai_result["response"]
+        def _count_user_turns(messages: Any) -> int:
+            if not isinstance(messages, list):
+                return 0
+            n = 0
+            for mm in messages:
+                if isinstance(mm, dict) and _safe_str(mm.get("role")).lower() == "user":
+                    if _safe_str(mm.get("content")):
+                        n += 1
+            return n
+
+        user_turn_ix = _count_user_turns(doc["messages"])
+
+        ai_pack = orchestrator.process(
+            msg,
+            mood_val,
+            sid,
+            history_for_ai,
+            message_index=user_turn_ix,
+        )
+        ai_ts = _utc_now_iso()
+        ai_text = _safe_str(ai_pack.get("response"))
+        returned_insight = ai_pack.get("memory_insight")
+        ef = ai_pack.get("extracted_facts")
+        if isinstance(ef, dict):
+            doc["extracted_facts"] = ef
+
+        emo_saved = _safe_str(ai_pack.get("emotion"), max_len=24).lower()
+        if emo_saved not in ALLOWED_EMOTIONS:
+            emo_saved = "okay"
+        doc["last_emotion"] = emo_saved
 
         ai_entry = {
             "role": "model",
-            "content": ai_text,
+            "content": ai_text or "Hmm, abhi kuch clear nahi 🤍 Dobara zaroor likhna.",
             "timestamp": ai_ts,
         }
         doc["messages"].append(ai_entry)
-
-        mem_insights = doc.setdefault("memory_insights", [])
-        returned_insight = ai_result.get("memory_insight")
-        msgs = doc["messages"]
-        if len(msgs) > 0 and len(msgs) % 5 == 0:
-            generated = agent.generate_memory_insight(msgs)
-            if generated:
-                mem_insights.append(generated)
-                returned_insight = generated
-
-        emo_saved = _safe_str(emotion, max_len=24).lower()
-        if emo_saved in ALLOWED_EMOTIONS:
-            doc["last_emotion"] = emo_saved
 
         with open(session_file, "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, indent=2)
@@ -851,8 +876,14 @@ def chat_route():
         return jsonify(
             {
                 "response": ai_text,
-                "suggested_exercise": ai_result.get("suggested_exercise") or "none",
+                "emotion": emo_saved,
+                "emotion_color": ai_pack.get("color"),
+                "urdu_label": ai_pack.get("urdu_label"),
+                "emotion_emoji": ai_pack.get("emoji"),
+                "suggested_exercise": ai_pack.get("suggested_exercise") or "none",
                 "memory_insight": returned_insight,
+                "technique_used": ai_pack.get("technique_used"),
+                "risk_level": ai_pack.get("risk_level"),
                 "timestamp": ai_ts,
             }
         )

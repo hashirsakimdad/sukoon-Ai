@@ -77,6 +77,44 @@
   const groundingDone = $("groundingDone");
   const groundingProgressFill = $("groundingProgressFill");
   const openNewTabBtn = $("openNewTabBtn");
+  const agentStatusLine = $("agentStatusLine");
+  const agentTechniqueLine = $("agentTechniqueLine");
+
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let agentSidebarTimer = null;
+
+  function clearAgentSidebarTimer() {
+    if (agentSidebarTimer) window.clearInterval(agentSidebarTimer);
+    agentSidebarTimer = null;
+  }
+
+  function beginAgentSidebarSequence() {
+    if (!agentStatusLine) return;
+    clearAgentSidebarTimer();
+    if (agentTechniqueLine) agentTechniqueLine.textContent = "";
+    const phases = ["🔍 Emotion Agent...", "💾 Memory Agent...", "💬 Therapy Agent..."];
+    let step = 0;
+    agentStatusLine.textContent = phases[0];
+    agentSidebarTimer = window.setInterval(() => {
+      step = Math.min(step + 1, phases.length - 1);
+      agentStatusLine.textContent = phases[step];
+    }, 760);
+  }
+
+  function finishAgentSidebarTechnique(techniqueUsed) {
+    clearAgentSidebarTimer();
+    if (agentStatusLine) agentStatusLine.textContent = "✅ Response ready!";
+    if (agentTechniqueLine) {
+      const t = techniqueUsed ? String(techniqueUsed).trim() : "";
+      agentTechniqueLine.textContent = t ? `💡 CBT Technique: ${t}` : "";
+    }
+  }
+
+  function markAgentSidebarError(msg) {
+    clearAgentSidebarTimer();
+    if (agentStatusLine) agentStatusLine.textContent = msg || "⚠️ Masla aa gaya";
+    agentTechniqueLine && (agentTechniqueLine.textContent = "");
+  }
 
   const EMOJI_BY_MOOD = (n) => {
     if (n <= 3) return "😔";
@@ -153,15 +191,17 @@
     memoryInsightText.textContent = t;
   }
 
-  function setEmotionUI(emotion, color, urduLabel) {
+  function setEmotionUI(emotion, color, urduLabel, customEmoji = null) {
     if (!emotionBadge || !emotionUrdu || !emotionEmojiEl) return;
     const em = String(emotion || "okay").toLowerCase();
     const col = color || "#14b8a6";
+    const ico =
+      typeof customEmoji === "string" && customEmoji.trim() ? customEmoji.trim() : EMOTION_ICONS[em] || EMOTION_ICONS.okay;
     emotionBadge.style.setProperty("--emotion-glow", col);
     emotionUrdu.textContent = urduLabel || em;
-    emotionEmojiEl.textContent = EMOTION_ICONS[em] || EMOTION_ICONS.okay;
+    emotionEmojiEl.textContent = ico;
     if (voiceOverlayEmoji && voiceOverlayUrdu) {
-      voiceOverlayEmoji.textContent = EMOTION_ICONS[em] || EMOTION_ICONS.okay;
+      voiceOverlayEmoji.textContent = ico;
       voiceOverlayUrdu.textContent = urduLabel || em;
     }
   }
@@ -875,18 +915,6 @@
     return map[em] || map.okay;
   }
 
-  async function analyzeEmotion(message) {
-    const res = await fetch("/analyze-emotion", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, session_id: sessionId }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "emotion");
-    return data;
-  }
-
   async function chatRequest(payload) {
     const res = await fetch("/chat", {
       method: "POST",
@@ -933,21 +961,21 @@
 
     sendBtn.disabled = true;
     setTyping(true);
+    beginAgentSidebarSequence();
 
     try {
-      const emotionData = await analyzeEmotion(text);
-      const emotionKey = String(emotionData.emotion || "okay");
-      const col = emotionData.color || glowForEmotion(emotionKey);
-      const urd = emotionData.urdu_label || urduGuess(emotionKey);
-      setEmotionUI(emotionKey, col, urd);
-
       const data = await chatRequest({
         message: text,
         mood: moodVal,
         history: historyForPayload(),
-        emotion: emotionKey,
         session_id: sessionId,
       });
+
+      const emotionKey = String(data.emotion || "okay").toLowerCase();
+      const col = data.emotion_color || glowForEmotion(emotionKey);
+      const urd = data.urdu_label || urduGuess(emotionKey);
+      setEmotionUI(emotionKey, col, urd, data.emotion_emoji || null);
+      finishAgentSidebarTechnique(data.technique_used);
 
       const reply = String(data.response || "").trim();
       const stamp = padTime(data.timestamp ? new Date(data.timestamp) : new Date());
@@ -969,9 +997,11 @@
           ? "Internet check karo yaar"
           : "Yaar internet check karo 🤍"
         : "Kuch masla aa gaya, dobara try karo.";
+      markAgentSidebarError(net ? "Internet check karo yaar" : "⚠️ Agent chain — dubara try karo");
       addAiBubble(errText, padTime(new Date()), { autoSpeak: true });
       history.push({ role: "model", content: errText, timestamp: new Date().toISOString() });
     } finally {
+      if (agentSidebarTimer) clearAgentSidebarTimer();
       chatSendInFlight = false;
       setTyping(false);
       sendBtn.disabled = false;

@@ -421,6 +421,32 @@ body {
   animation: slideUpFade 0.45s var(--ease-out) backwards;
 }
 
+/* Multi-agent sidebar status */
+.agent-status-sidebar .agent-status-plate {
+  padding: 0.55rem 0.62rem;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-purple) 22%, var(--border));
+  background: color-mix(in srgb, var(--accent-purple) 6%, var(--bg-card));
+}
+
+.agent-status-line {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 92%, var(--accent-purple));
+  line-height: 1.35;
+}
+
+.agent-technique-line {
+  margin: 0.42rem 0 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--accent-teal);
+  line-height: 1.35;
+  min-height: 1em;
+}
+
 .top-bar {
   flex-shrink: 0;
   display: grid;
