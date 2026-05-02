@@ -1,6 +1,8 @@
 (() => {
   const $ = (id) => document.getElementById(id);
 
+  const STORAGE_SESSION = "sukoon_session_id";
+
   let bootstrap = {};
   try {
     const el = $("sukoon-bootstrap");
@@ -9,13 +11,18 @@
     bootstrap = {};
   }
 
-  let sessionId = bootstrap.session_id || "";
+  let sessionId = localStorage.getItem(STORAGE_SESSION);
+  if (!sessionId) {
+    sessionId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    localStorage.setItem(STORAGE_SESSION, sessionId);
+  }
 
   /** @type {{role:string,content:string,timestamp?:string}[]} */
-  let history = Array.isArray(bootstrap.history) ? bootstrap.history.slice() : [];
-  let moodSeries = Array.isArray(bootstrap.mood_history)
-    ? bootstrap.mood_history.map((m) => (m && typeof m.value === "number" ? m.value : null)).filter((n) => n != null)
-    : [];
+  let history = [];
+  let moodSeries = [];
 
   const chatEl = $("chat");
   const chatScroll = $("chatScroll");
@@ -69,6 +76,7 @@
   const groundingList = $("groundingList");
   const groundingDone = $("groundingDone");
   const groundingProgressFill = $("groundingProgressFill");
+  const openNewTabBtn = $("openNewTabBtn");
 
   const EMOJI_BY_MOOD = (n) => {
     if (n <= 3) return "😔";
@@ -802,6 +810,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.session) return;
       sessionId = data.session.session_id || sessionId;
+      localStorage.setItem(STORAGE_SESSION, sessionId);
 
       moodSeries =
         Array.isArray(data.session.mood_history) && data.session.mood_history.length
@@ -829,7 +838,7 @@
         ? data.session.memory_insights.filter(Boolean).pop()
         : "";
       if (typeof ins === "string" && ins) setMemoryBar(ins);
-      else if (bootstrap.latest_memory_insight) setMemoryBar(bootstrap.latest_memory_insight);
+      else setMemoryBar(bootstrap.latest_memory_insight || "");
 
       resizeCanvasPixels();
       updateMoodUI();
@@ -871,7 +880,7 @@
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, session_id: sessionId }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || "emotion");
@@ -1281,6 +1290,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.session) return;
       sessionId = data.session.session_id;
+      localStorage.setItem(STORAGE_SESSION, sessionId);
       bootstrap.session_id = sessionId;
       closeHistoryPanel();
       stopSpeechSynth();
@@ -1323,6 +1333,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.session) return;
       sessionId = data.session.session_id;
+      localStorage.setItem(STORAGE_SESSION, sessionId);
       moodSeries = [];
       hideExercises();
       setMemoryBar("");
@@ -1353,6 +1364,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.session_id) return;
       sessionId = data.session_id;
+      localStorage.setItem(STORAGE_SESSION, sessionId);
       stopSpeechSynth();
       await hydrateFromServer();
       closeHistoryPanel();
@@ -1360,6 +1372,11 @@
   }
 
   /* Wire */
+  openNewTabBtn &&
+    openNewTabBtn.addEventListener("click", () => {
+      window.open(window.location.href, "_blank", "noopener,noreferrer");
+    });
+
   voiceMuteBtn &&
     voiceMuteBtn.addEventListener("click", () => {
       setVoiceMute(!isVoiceMuted());

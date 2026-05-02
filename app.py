@@ -40,7 +40,14 @@ else:
 
 DATA_DIR = Path("data")
 SESSIONS_DIR = DATA_DIR / "sessions"
-SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_sessions_directory() -> None:
+    """Always ensure session JSON directory exists on disk (Docker / ephemeral fs safe)."""
+    os.makedirs(DATA_DIR / "sessions", exist_ok=True)
+
+
+ensure_sessions_directory()
 
 PRIMARY_MODEL = "gemini-1.5-flash"
 QUOTA_FALLBACK_MODEL = "gemini-1.5-flash-8b"
@@ -196,6 +203,13 @@ def _build_gemini_history(history: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _default_model_greeting() -> str:
+    return (
+        "Assalam o Alaikum! 🤍 Main Sukoon AI hun — tumhara digital dost. "
+        "Aaj kaisa feel ho raha hai? Bata sakte ho mujhe."
+    )
+
+
 def _new_session(session_id: str) -> dict[str, Any]:
     return {
         "session_id": session_id,
@@ -215,9 +229,15 @@ def _session_path(session_id: str) -> Path:
 
 
 def load_session_doc(session_id: str) -> dict[str, Any]:
+    ensure_sessions_directory()
     path = _session_path(session_id)
     if not path.exists():
-        return _new_session(session_id)
+        doc = _new_session(session_id)
+        doc["messages"].append(
+            {"role": "model", "content": _default_model_greeting(), "timestamp": _utc_now_iso()},
+        )
+        save_session_doc(doc)
+        return doc
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -241,12 +261,12 @@ def load_session_doc(session_id: str) -> dict[str, Any]:
 
 
 def save_session_doc(doc: dict[str, Any]) -> None:
+    ensure_sessions_directory()
     sid = _safe_str(doc.get("session_id"), max_len=80)
     if not sid:
         raise ValueError("missing session_id")
-    path = _session_path(sid)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    session_file = _session_path(sid)
+    with open(session_file, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=2)
 
 
@@ -662,42 +682,14 @@ CORS(app)
 @app.get("/")
 def index():
     try:
-        sid = session.get("session_id") or str(uuid.uuid4())
-        session["session_id"] = sid
-        doc = load_session_doc(sid)
-        if not doc["messages"]:
-            greet = (
-                "Assalam o Alaikum! 🤍 Main Sukoon AI hun — tumhara digital dost. "
-                "Aaj kaisa feel ho raha hai? Bata sakte ho mujhe."
-            )
-            doc["messages"].append(
-                {"role": "model", "content": greet, "timestamp": _utc_now_iso()},
-            )
-            save_session_doc(doc)
-
-        hist = []
-        for m in doc.get("messages", []):
-            if not isinstance(m, dict):
-                continue
-            hist.append(
-                {
-                    "role": m.get("role"),
-                    "content": m.get("content", ""),
-                    "timestamp": m.get("timestamp", ""),
-                }
-            )
-
-        latest_insight = ""
-        insights = doc.get("memory_insights") or []
-        if isinstance(insights, list) and insights:
-            latest_insight = _safe_str(insights[-1], max_len=500)
-
+        ensure_sessions_directory()
+        # Session & history come from disk via client localStorage session_id + GET /history.
         return render_template(
             "index.html",
-            session_id=sid,
-            history=hist,
-            mood_history=doc.get("mood_history") or [],
-            latest_memory_insight=latest_insight,
+            session_id="",
+            history=[],
+            mood_history=[],
+            latest_memory_insight="",
             recent_sessions=list_recent_sessions(5),
         )
     except Exception as e:
@@ -722,10 +714,12 @@ def get_sessions():
 @app.get("/history")
 def get_history():
     try:
+        ensure_sessions_directory()
         sid = request.args.get("session_id") or session.get("session_id")
         if not sid:
             return jsonify(_friendly_error_payload("Session nahi mila.")), 400
         sid = _safe_str(sid, max_len=80)
+        # Always hydrate from JSON on disk for this session_id (never in-memory-only).
         doc = load_session_doc(sid)
         return jsonify({"ok": True, "session": doc})
     except Exception as e:
@@ -754,6 +748,7 @@ def switch_session():
 def analyze_emotion_route():
     try:
         data = request.get_json(silent=True) or {}
+        # Clients may send session_id for correlation (persists in localStorage).
         msg = data.get("message", "")
         out = agent.analyze_emotion(msg)
         return jsonify(out)
@@ -769,6 +764,7 @@ def analyze_emotion_route():
 def chat_route():
     ai_ts = _utc_now_iso()
     try:
+        ensure_sessions_directory()
         data = request.get_json(silent=True) or {}
         message = data.get("message", "")
         mood = data.get("mood")
@@ -815,6 +811,11 @@ def chat_route():
         user_entry = {"role": "user", "content": msg, "timestamp": ts}
         doc.setdefault("messages", []).append(user_entry)
 
+        # Persist immediately after every user message (crash-safe before Gemini).
+        session_file = _session_path(sid)
+        with open(session_file, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=2)
+
         try:
             ai_result = agent.chat(msg, mood_val, history_for_ai, emotion)
             ai_ts = _utc_now_iso()
@@ -844,7 +845,8 @@ def chat_route():
         if emo_saved in ALLOWED_EMOTIONS:
             doc["last_emotion"] = emo_saved
 
-        save_session_doc(doc)
+        with open(session_file, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=2)
 
         return jsonify(
             {
