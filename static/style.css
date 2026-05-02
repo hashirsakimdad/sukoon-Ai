@@ -1300,22 +1300,22 @@ body.theme-light .chat-flex.voice-chat-glow {
 }
 
 .waveform.is-listening .bar:nth-child(1) {
-  animation: voiceWaveLine 0.8s ease infinite 0s;
+  animation: wave 0.8s ease infinite 0s;
 }
 .waveform.is-listening .bar:nth-child(2) {
-  animation: voiceWaveLine 0.8s ease infinite 0.15s;
+  animation: wave 0.8s ease infinite 0.15s;
 }
 .waveform.is-listening .bar:nth-child(3) {
-  animation: voiceWaveLine 0.8s ease infinite 0.3s;
+  animation: wave 0.8s ease infinite 0.3s;
 }
 .waveform.is-listening .bar:nth-child(4) {
-  animation: voiceWaveLine 0.8s ease infinite 0.45s;
+  animation: wave 0.8s ease infinite 0.45s;
 }
 .waveform.is-listening .bar:nth-child(5) {
-  animation: voiceWaveLine 0.8s ease infinite 0.6s;
+  animation: wave 0.8s ease infinite 0.6s;
 }
 
-@keyframes voiceWaveLine {
+@keyframes wave {
   0%,
   100% {
     height: 8px;
