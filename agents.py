@@ -151,12 +151,13 @@ def gemini_plain_text(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
     )
+    # Some google-generativeai versions don't support `system_instruction` on the model ctor.
+    # Keep compatibility by folding it into the prompt.
+    if system_instruction:
+        prompt = f"{safe_str(system_instruction, max_len=3000).strip()}\n\n{prompt}"
     for model_name in (AGENT_PRIMARY_MODEL, AGENT_MODEL_FALLBACK):
         try:
-            kwargs_model: dict[str, Any] = {"model_name": model_name}
-            if system_instruction:
-                kwargs_model["system_instruction"] = system_instruction
-            model = genai.GenerativeModel(**kwargs_model)
+            model = genai.GenerativeModel(model_name=model_name)
             if gen_cfg is not None:
                 res = model.generate_content(prompt, generation_config=gen_cfg)
             else:
@@ -632,144 +633,39 @@ class TherapyAgent:
         emotion_data = emotion_analysis if isinstance(emotion_analysis, dict) else {}
         base_fallback = therapy_fallback_bundle(message, emotion_data)
 
-        user_msg = safe_str(message, max_len=6000).replace('"', "'")
-        mem = safe_str(memory_context, max_len=2200).replace('"', "'")
+        user_msg = safe_str(message, max_len=6000).replace("\n", " ").strip()
+        mem = safe_str(memory_context, max_len=2200).replace("\n", " ").strip()
         mood_disp = mood if isinstance(mood, int) else "unknown"
-        emotion = safe_str(emotion_data.get("primary_emotion", "okay"), max_len=24)
-        intensity = emotion_data.get("intensity", 5)
-        try:
-            intensity = int(intensity)
-        except Exception:
-            intensity = 5
 
-        system_prompt = f"""
-Tum Sukoon AI ho — Pakistan ka pehla Roman Urdu mental health 
-support chatbot. Tum ek caring, warm dost ho jo mental health 
-samajhta hai.
+        prompt = f"""Tum Sukoon AI ho — ek warm Pakistani dost.
 
-SABSE IMPORTANT RULES:
-1. Pehle user ki feeling VALIDATE karo — judge mat karo
-2. Phir EMPATHY dikhao — "yaar yeh sach mein mushkil hai"
-3. Phir EK chota practical suggestion do
-4. End mein EK caring sawaal
+User ne EXACTLY yeh kaha: "{user_msg}"
+Emotion: {safe_str(emotion_data.get('primary_emotion', 'okay'), max_len=24)}
+Intensity: {safe_str(emotion_data.get('intensity', 5), max_len=8)}/10
+Mood: {mood_disp}/10
+User ke baare mein: {mem}
 
-OUTPUT CONSTRAINTS (must follow):
-- Roman Urdu only
-- Exactly 4 sentences (no more, no less), in this order:
-  1) Validation
-  2) Empathy ("yaar yeh sach mein mushkil hai" style)
-  3) One small practical step (breathing / grounding / tiny next action)
-  4) One caring question (sirf ek sawal)
-- No life-coach tone, no lectures, no clinical/robotic language
+Sirf is message ka jawab do. Koi script nahi. Koi template nahi.
+Jaise ek real dost jawab deta hai.
 
-USER NE YEH KAHA: {user_msg}
-EMOTION: {emotion} (intensity: {intensity}/10)
-MOOD: {mood_disp}/10
-MEMORY: {mem}
-
-RESPONSE EXAMPLES based on what they say:
-
-If anxiety:
-"Yaar anxiety sach mein bahut tiring hoti hai — jism aur dimaag 
-dono thak jaate hain. Abhi ek kaam karo — 4 second saans lo, 
-4 second roko, 4 second mein chodo. Yeh cycle 3 baar karo.
-Kya anxiety kisi specific cheez ki wajah se hai ya bas aise hi?"
-
-If sad/udaas:
-"Udaasi ko feel karna bilkul theek hai yaar — isko daba mat.
-Kabhi kabhi bas koi sunne wala chahiye hota hai. Main yahan hun.
-Kya aaj kuch aisa hua jo specially heavy feel hua?"
-
-If family tension:
-"Ghar ki tension bahut drain karti hai yaar — woh jagah jo 
-safe honi chahiye wahan bhi chain nahi — yeh sach mein bahut 
-mushkil hai. Kya tum mujhe thoda aur bata sakte ho kya ho raha hai?"
-
-If exam stress:
-"Exam ka pressure overwhelming ho sakta hai — especially jab 
-lagta hai sab kuch is pe depend karta hai. Yaar ek kaam karo —
-abhi sirf aaj ka ek subject, ek chapter. Bas itna. 
-Kaunsa subject sabse zyada scary lag raha hai?"
-
-NEVER:
-- Generic \"Main yahan hun sunne ke liye\"
-- \"courageous\" word use karna
-- Life coaching advice
-- \"Aik calm line soch lo\" (yeh exact line kabhi mat likhna)
-- English-only responses
-- Robotic/clinical language
-
-ALWAYS:
-- Roman Urdu main baat karo
-- Personal aur specific raho
-- Warm dost ki tarah baat karo
-- Maximum 4 sentences
-"""
-
-        prompt = system_prompt.strip()
+Roman Urdu mein. 3-4 sentences. Warm. Personal.
+End mein ek specific sawaal."""
 
         try:
             generation_config = genai.types.GenerationConfig(
                 temperature=0.95,
                 max_output_tokens=250,
             )
-            forbidden_phrases = [
-                "Aik calm line soch lo",
-                "courageous",
-                "Quick win",
-                "yehi jagah pakad",
-                "Achha tumne bola",
-                "Tumhari wording",
-                "Main yahan hun sunne ke liye",
-            ]
-
-            def _has_forbidden(t: str) -> bool:
-                low = t.lower()
-                for p in forbidden_phrases:
-                    if p.lower() in low:
-                        return True
-                return False
-
-            def _sentence_count(t: str) -> int:
-                # Keep it simple: split by sentence enders; fall back to non-empty lines.
-                parts = [s.strip() for s in re.split(r"[.!?؟]+", t) if s.strip()]
-                if len(parts) >= 2:
-                    return len(parts)
-                lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
-                return len(lines)
-
             for model_name in (self._preferred_model, AGENT_MODEL_FALLBACK):
                 try:
                     model = genai.GenerativeModel(model_name=model_name)
                     resp = model.generate_content(prompt, generation_config=generation_config)
                     text = safe_str(getattr(resp, "text", ""), max_len=6000).strip()
-
-                    # If the model violates rules, do a single corrective retry.
-                    if text and (_has_forbidden(text) or _sentence_count(text) != 4):
-                        fix_prompt = (
-                            "Tumhara pichla jawab rules tor gaya.\n"
-                            "Ab dobara likho aur inn rules ko strictly follow karo:\n"
-                            "- Roman Urdu only\n"
-                            "- Exactly 4 sentences (validation, empathy, 1 practical step, 1 caring question)\n"
-                            "- In phrases ko kabhi mat likhna: "
-                            + ", ".join([f'"{p}"' for p in forbidden_phrases])
-                            + "\n\n"
-                            f"User: {user_msg}\n"
-                            f"Emotion: {emotion} (intensity {intensity}/10)\n"
-                            f"Mood: {mood_disp}/10\n"
-                            f"Memory: {mem}\n"
-                        )
-                        resp2 = model.generate_content(fix_prompt, generation_config=generation_config)
-                        text2 = safe_str(getattr(resp2, "text", ""), max_len=6000).strip()
-                        if text2 and not _has_forbidden(text2):
-                            text = text2
-
-                    if text and not _has_forbidden(text):
-                        # Note: exercise suggestion stays conservative; frontend handles exercises separately.
+                    if text:
                         return {
                             "response": text,
                             "suggested_exercise": "none",
-                            "technique_used": "validation + practical step",
+                            "technique_used": "supportive response",
                             "follow_up_needed": True,
                         }
                 except gexc.NotFound:

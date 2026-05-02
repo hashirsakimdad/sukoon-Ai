@@ -203,8 +203,16 @@ def compute_trend_label(values: list[float]) -> str:
     return "stable"
 
 
-def compute_mood_values(doc: dict[str, Any]) -> list[float]:
-    mh = doc.get("mood_history")
+def compute_mood_values(mood_history_or_doc: Any) -> list[float]:
+    """Return clamped mood values (0..10) from mood_history.
+
+    Accepts either:
+    - the full session doc dict (with key 'mood_history'), or
+    - the mood_history list itself.
+    """
+    mh: Any = mood_history_or_doc
+    if isinstance(mood_history_or_doc, dict):
+        mh = mood_history_or_doc.get("mood_history")
     out: list[float] = []
     if isinstance(mh, list):
         for row in mh:
@@ -216,7 +224,7 @@ def compute_mood_values(doc: dict[str, Any]) -> list[float]:
     return [max(0.0, min(10.0, x)) for x in out]
 
 
-def merge_emotion_counts(items: Any) -> dict[str, int]:
+def merge_emotion_counts(items: Any, extra: Any = None) -> dict[str, int]:
     merged: dict[str, int] = {}
     if isinstance(items, dict):
         for k, v in items.items():
@@ -224,7 +232,6 @@ def merge_emotion_counts(items: Any) -> dict[str, int]:
                 merged[str(k)] = int(v)
             except Exception:
                 continue
-        return merged
     if isinstance(items, list):
         for it in items:
             if isinstance(it, dict):
@@ -235,6 +242,12 @@ def merge_emotion_counts(items: Any) -> dict[str, int]:
                     merged[emo] = merged.get(emo, 0) + int(it.get("count", 0))
                 except Exception:
                     continue
+    if isinstance(extra, dict):
+        for k, v in extra.items():
+            try:
+                merged[str(k)] = merged.get(str(k), 0) + int(v)
+            except Exception:
+                continue
     return merged
 
 

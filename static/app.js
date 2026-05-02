@@ -29,8 +29,6 @@
   const typingIndicator = $("typingIndicator");
   const inputEl = $("messageInput");
   const sendBtn = $("sendBtn");
-  const micBtn = $("micBtn");
-  const micStatus = $("micStatus");
   const reportHint = $("reportHint");
   const moodSlider = $("moodSlider");
   const moodEmoji = $("moodEmoji");
@@ -40,19 +38,6 @@
   const emotionUrdu = $("emotionUrdu");
   const emotionEmojiEl = $("emotionEmoji");
   const themeToggle = $("themeToggle");
-  const voiceMuteBtn = $("voiceMuteBtn");
-  const voiceModeToggle = $("voiceModeToggle");
-  const voiceModeBanner = $("voiceModeBanner");
-  const voiceModeOverlay = $("voiceModeOverlay");
-  const voiceOverlayStatus = $("voiceOverlayStatus");
-  const voiceOverlayTranscript = $("voiceOverlayTranscript");
-  const voiceWaveform = $("voiceWaveform");
-  const voiceMicOrb = $("voiceMicOrb");
-  const voicePauseBtn = $("voicePauseBtn");
-  const voiceModeExit = $("voiceModeExit");
-  const voiceOverlayEmoji = $("voiceOverlayEmoji");
-  const voiceOverlayUrdu = $("voiceOverlayUrdu");
-  const chatFlexWrap = document.querySelector(".chat-flex");
   const heroIntro = $("heroIntro");
   const heroStartBtn = $("heroStartBtn");
   const appMain = $("appMain");
@@ -80,44 +65,6 @@
   const groundingDone = $("groundingDone");
   const groundingProgressFill = $("groundingProgressFill");
   const openNewTabBtn = $("openNewTabBtn");
-  const agentStatusLine = $("agentStatusLine");
-  const agentTechniqueLine = $("agentTechniqueLine");
-
-  /** @type {ReturnType<typeof setInterval> | null} */
-  let agentSidebarTimer = null;
-
-  function clearAgentSidebarTimer() {
-    if (agentSidebarTimer) window.clearInterval(agentSidebarTimer);
-    agentSidebarTimer = null;
-  }
-
-  function beginAgentSidebarSequence() {
-    if (!agentStatusLine) return;
-    clearAgentSidebarTimer();
-    if (agentTechniqueLine) agentTechniqueLine.textContent = "";
-    const phases = ["Emotion Agent...", "Memory Agent...", "Therapy Agent..."];
-    let step = 0;
-    agentStatusLine.textContent = phases[0];
-    agentSidebarTimer = window.setInterval(() => {
-      step = Math.min(step + 1, phases.length - 1);
-      agentStatusLine.textContent = phases[step];
-    }, 760);
-  }
-
-  function finishAgentSidebarTechnique(techniqueUsed) {
-    clearAgentSidebarTimer();
-    if (agentStatusLine) agentStatusLine.textContent = "Response ready.";
-    if (agentTechniqueLine) {
-      const t = techniqueUsed ? String(techniqueUsed).trim() : "";
-      agentTechniqueLine.textContent = t ? `CBT Technique: ${t}` : "";
-    }
-  }
-
-  function markAgentSidebarError(msg) {
-    clearAgentSidebarTimer();
-    if (agentStatusLine) agentStatusLine.textContent = msg || "⚠️ Masla aa gaya";
-    agentTechniqueLine && (agentTechniqueLine.textContent = "");
-  }
 
   function getMoodEmoji(score) {
     if (score <= 2) return "😢";
@@ -167,24 +114,7 @@
     happy: "😊",
   };
 
-  /** @type {SpeechRecognition | null} */
-  let recognition = null;
-  let listening = false;
-  let voiceLangFallbackTried = false;
-  /** @type {string} */
-  let voiceFinalAccum = "";
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let voiceAutoSendTimer = null;
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let voiceResumeAfterTtsTimer = null;
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let voiceNoSpeechRetryTimer = null;
-
-  // voices are read from speechSynthesis.getVoices() inside speakText()
-  let voiceModeActive = false;
-  let voiceCyclePaused = false;
   let chatSendInFlight = false;
-  let ttsActive = false;
 
   let breathingOn = false;
   /** @type {ReturnType<typeof setTimeout> | null} */
@@ -237,10 +167,6 @@
     const label = urduLabel ? `${capitalizeEmotion(em)} — ${urduLabel}` : capitalizeEmotion(em);
     emotionUrdu.textContent = label || em;
     emotionEmojiEl.textContent = ico;
-    if (voiceOverlayEmoji && voiceOverlayUrdu) {
-      voiceOverlayEmoji.textContent = ico;
-      voiceOverlayUrdu.textContent = label || em;
-    }
   }
 
   function capitalizeEmotion(em) {
@@ -467,329 +393,7 @@
     }));
   }
 
-  /** -------- Voice (STT / TTS / Voice Mode) -------- */
-
-  const synth = window.speechSynthesis;
-
-  let ttsGen = 0;
-
-  function isVoiceMuted() {
-    return localStorage.getItem("sukoon_voice_mute") === "1";
-  }
-
-  function setVoiceMute(on) {
-    localStorage.setItem("sukoon_voice_mute", on ? "1" : "0");
-    updateMuteButtonUI();
-    if (on) stopSpeechSynth();
-    refreshVoiceBannerAndOverlay();
-  }
-
-  function updateMuteButtonUI() {
-    if (!voiceMuteBtn) return;
-    const muted = isVoiceMuted();
-    voiceMuteBtn.textContent = muted ? "Muted" : "Voice";
-    voiceMuteBtn.setAttribute("aria-pressed", muted ? "true" : "false");
-    voiceMuteBtn.title = muted ? "Unmute AI voice" : "Mute AI voice";
-    voiceMuteBtn.classList.toggle("is-muted", muted);
-  }
-
-  function stopSpeechSynth() {
-    ttsGen += 1;
-    ttsActive = false;
-    try {
-      synth && synth.cancel();
-    } catch (_) {}
-  }
-
-  function getBestVoice() {
-    const voices = (synth && synth.getVoices && synth.getVoices()) || [];
-
-    // Priority 1: Real Urdu voice
-    let voice = voices.find((v) => v.lang === "ur-PK");
-    if (voice) return { voice, lang: "ur-PK" };
-
-    // Priority 2: Any Urdu
-    voice = voices.find((v) => String(v.lang || "").startsWith("ur"));
-    if (voice) return { voice, lang: "ur" };
-
-    // Priority 3: Indian English (closer to Pakistani accent)
-    voice = voices.find((v) => v.lang === "en-IN");
-    if (voice) return { voice, lang: "en-IN" };
-
-    // Priority 4: Any Indian voice
-    voice = voices.find((v) => String(v.name || "").toLowerCase().includes("india"));
-    if (voice) return { voice, lang: "en-IN" };
-
-    // Priority 5: Female English voice (warmer)
-    voice = voices.find((v) => {
-      const nm = String(v.name || "").toLowerCase();
-      return nm.includes("female") || nm.includes("zira") || nm.includes("hazel");
-    });
-    if (voice) return { voice, lang: "en-US" };
-
-    return { voice: voices[0] || null, lang: "en-US" };
-  }
-
-  function speakText(text) {
-    return new Promise((resolve) => {
-      const t = String(text || "").trim();
-      if (!t || !synth || isVoiceMuted()) {
-        resolve();
-        return;
-      }
-
-      synth.cancel();
-
-      const trySpeak = () => {
-        const picked = getBestVoice();
-        const utterance = new SpeechSynthesisUtterance(t);
-        if (picked.voice) utterance.voice = picked.voice;
-        utterance.lang = picked.lang;
-        utterance.rate = 0.8;
-        utterance.pitch = 1.1;
-        utterance.volume = 1.0;
-        utterance.onend = () => resolve();
-        utterance.onerror = () => resolve();
-        synth.speak(utterance);
-      };
-
-      if (synth.getVoices().length === 0) {
-        synth.onvoiceschanged = trySpeak;
-      } else {
-        trySpeak();
-      }
-    });
-  }
-
-  function splitSpeakChunks(text) {
-    const raw = String(text || "")
-      .replace(/\r\n/g, "\n")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!raw) return [];
-
-    const pieces = [];
-    let cur = "";
-    for (let i = 0; i < raw.length; i++) {
-      const ch = raw[i];
-      cur += ch;
-      if (/[.。!?؟]/.test(ch) || ch === "\n") {
-        const s = cur.trim();
-        if (s) pieces.push(s);
-        cur = "";
-      }
-    }
-    const tail = cur.trim();
-    if (tail) pieces.push(tail);
-
-    let chunks = pieces.length ? pieces : [raw];
-    const MAX = 320;
-    const out = [];
-    for (const chunk of chunks) {
-      if (chunk.length <= MAX) {
-        out.push(chunk);
-        continue;
-      }
-      let start = 0;
-      while (start < chunk.length) {
-        let end = Math.min(start + MAX, chunk.length);
-        if (end < chunk.length) {
-          const sp = chunk.lastIndexOf(" ", end);
-          if (sp > start + 40) end = sp;
-        }
-        const slice = chunk.slice(start, end).trim();
-        if (slice) out.push(slice);
-        start = end;
-      }
-    }
-    return out.length ? out : [raw];
-  }
-
-  /**
-   * @param {string} text
-   * @param {() => void} [onComplete]
-   */
-  function speakAiResponse(text, onComplete) {
-    const cb = typeof onComplete === "function" ? onComplete : () => {};
-    const raw = String(text || "").trim();
-    if (!raw) {
-      cb();
-      return;
-    }
-    if (!synth) {
-      if (voiceModeActive && micStatus) {
-        micStatus.textContent = "TTS unsupported — sirf text.";
-        setTimeout(() => {
-          if (micStatus) micStatus.textContent = "";
-        }, 4500);
-      }
-      cb();
-      return;
-    }
-
-    stopSpeechSynth();
-    const runGen = ttsGen;
-    if (isVoiceMuted()) {
-      cb();
-      return;
-    }
-
-    const chunks = splitSpeakChunks(raw);
-    let idx = 0;
-    ttsActive = true;
-    refreshVoiceListeningUI(false);
-
-    const done = () => {
-      if (runGen !== ttsGen) return;
-      ttsActive = false;
-      cb();
-      refreshVoiceBannerAndOverlay();
-      refreshVoiceListeningUI(listening);
-    };
-
-    const next = () => {
-      if (runGen !== ttsGen) return;
-      if (idx >= chunks.length) {
-        done();
-        return;
-      }
-      const line = chunks[idx];
-      idx += 1;
-      speakText(line)
-        .then(() => next())
-        .catch(() => next());
-    };
-
-    refreshVoiceBannerAndOverlay();
-    next();
-  }
-
-  function clearVoiceResumeTimer() {
-    if (voiceResumeAfterTtsTimer) {
-      clearTimeout(voiceResumeAfterTtsTimer);
-      voiceResumeAfterTtsTimer = null;
-    }
-  }
-
-  function clearVoiceNoSpeechRetry() {
-    if (voiceNoSpeechRetryTimer) {
-      clearTimeout(voiceNoSpeechRetryTimer);
-      voiceNoSpeechRetryTimer = null;
-    }
-  }
-
-  /** Auto-start mic after Sukoon finishes speaking (voice mode loop). */
-  function scheduleResumeListeningAfterAi() {
-    clearVoiceResumeTimer();
-    if (!voiceModeActive || voiceCyclePaused) return;
-
-    voiceResumeAfterTtsTimer = setTimeout(() => {
-      voiceResumeAfterTtsTimer = null;
-      if (!voiceModeActive || voiceCyclePaused || ttsActive || chatSendInFlight) return;
-      tryStartRecognitionAfterTtsGap();
-    }, 520);
-  }
-
-  function tryStartRecognitionAfterTtsGap() {
-    if (!recognition || !speechRecognitionAvailable()) return;
-    if (!voiceModeActive || voiceCyclePaused || ttsActive || chatSendInFlight || listening) return;
-    try {
-      voiceLangFallbackTried = false;
-      voiceFinalAccum = "";
-      clearVoiceAutoSend();
-      recognition.lang = "ur-PK";
-      recognition.start();
-    } catch (_) {}
-  }
-
-  function speechRecognitionAvailable() {
-    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-  }
-
-  function refreshVoiceListeningUI(recOn) {
-    if (voiceWaveform) {
-      voiceWaveform.classList.toggle(
-        "is-listening",
-        !!(recOn && voiceModeActive && !voiceCyclePaused),
-      );
-    }
-    if (!voiceMicOrb) return;
-    const pulse =
-      !!recOn && voiceModeActive && !voiceCyclePaused && !ttsActive && !chatSendInFlight;
-    voiceMicOrb.classList.toggle("is-pulsing", pulse);
-  }
-
-  function refreshVoiceBannerAndOverlay() {
-    if (voiceOverlayStatus && voiceModeActive) {
-      if (voiceCyclePaused) {
-        voiceOverlayStatus.textContent = "⏸️ Ruk gaya";
-      } else if (ttsActive) {
-        voiceOverlayStatus.textContent = "Sun lo...";
-      } else if (chatSendInFlight) {
-        voiceOverlayStatus.textContent = "Soch raha hun...";
-      } else if (listening) {
-        voiceOverlayStatus.textContent = "Bol sakte ho...";
-      } else {
-        voiceOverlayStatus.textContent = "Bol sakte ho...";
-      }
-    }
-
-    if (voiceModeBanner && voiceModeActive) {
-      if (voiceCyclePaused) voiceModeBanner.textContent = "⏸️ Voice Mode — Pause";
-      else if (ttsActive) voiceModeBanner.textContent = "Voice Mode — Sun lo!";
-      else if (chatSendInFlight) voiceModeBanner.textContent = "Voice Mode — Soch raha hun...";
-      else voiceModeBanner.textContent = "Voice Mode — Bol sakte ho!";
-    }
-  }
-
-  function setVoiceMode(on) {
-    voiceModeActive = !!on;
-
-    voiceModeToggle && voiceModeToggle.setAttribute("aria-pressed", on ? "true" : "false");
-    voiceModeBanner && voiceModeBanner.classList.toggle("hidden", !on);
-    voiceModeOverlay && voiceModeOverlay.classList.toggle("hidden", !on);
-    voiceModeOverlay && voiceModeOverlay.setAttribute("aria-hidden", on ? "false" : "true");
-    chatFlexWrap && chatFlexWrap.classList.toggle("voice-chat-glow", !!on);
-
-    if (!on) {
-      voiceCyclePaused = false;
-      voicePauseBtn && voicePauseBtn.setAttribute("aria-pressed", "false");
-      voicePauseBtn && (voicePauseBtn.textContent = "⏸️ Pause");
-      clearVoiceNoSpeechRetry();
-      clearVoiceResumeTimer();
-      try {
-        recognition && recognition.stop();
-      } catch (_) {}
-      listening = false;
-      if (micBtn) micBtn.classList.remove("listening");
-      refreshVoiceListeningUI(false);
-      if (voiceOverlayTranscript) {
-        voiceOverlayTranscript.textContent = "";
-        voiceOverlayTranscript.classList.remove("voice-transcript-live");
-      }
-      if (voiceMicOrb) voiceMicOrb.classList.remove("is-pulsing");
-      if (micStatus) micStatus.textContent = "";
-    } else {
-      voiceCyclePaused = false;
-      voicePauseBtn && voicePauseBtn.setAttribute("aria-pressed", "false");
-      voicePauseBtn && (voicePauseBtn.textContent = "⏸️ Pause");
-      refreshVoiceBannerAndOverlay();
-      clearVoiceNoSpeechRetry();
-      clearVoiceResumeTimer();
-      voiceResumeAfterTtsTimer = setTimeout(() => {
-        voiceResumeAfterTtsTimer = null;
-        if (voiceModeActive && !voiceCyclePaused && !ttsActive && !chatSendInFlight)
-          tryStartRecognitionAfterTtsGap();
-      }, 380);
-    }
-  }
-
-  function clearVoiceAutoSend() {
-    if (voiceAutoSendTimer) {
-      clearTimeout(voiceAutoSendTimer);
-      voiceAutoSendTimer = null;
-    }
-  }
+  /** -------- Text-only mode (no STT/TTS/Voice Mode) -------- */
 
   function autoResizeTextarea() {
     if (!inputEl) return;
@@ -808,10 +412,8 @@
   /**
    * @param {string} content
    * @param {string} stamp
-   * @param {{ autoSpeak?: boolean }} [opts]
    */
-  function addAiBubble(content, stamp, opts = {}) {
-    const { autoSpeak = false } = opts;
+  function addAiBubble(content, stamp) {
     if (!chatEl) return;
     const row = document.createElement("article");
     row.className = "msg msg-ai";
@@ -835,18 +437,7 @@
     text.style.margin = "0";
     text.textContent = content;
 
-    const speakBtn = document.createElement("button");
-    speakBtn.type = "button";
-    speakBtn.className = "msg-speak-btn";
-    speakBtn.setAttribute("aria-label", "Play message");
-    speakBtn.textContent = "Speak";
-    speakBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      speakAiResponse(content, () => {});
-    });
-
     head.appendChild(text);
-    head.appendChild(speakBtn);
 
     const time = document.createElement("time");
     time.textContent = stamp || "";
@@ -858,12 +449,6 @@
     row.appendChild(wrap);
     chatEl.appendChild(row);
     scrollChat();
-
-    if (autoSpeak) {
-      speakAiResponse(content, () => {
-        scheduleResumeListeningAfterAi();
-      });
-    }
   }
 
   function addUserBubble(content, stamp) {
@@ -904,7 +489,7 @@
       });
 
       if (role === "user") addUserBubble(c, stamp);
-      else addAiBubble(c, stamp, { autoSpeak: false });
+      else addAiBubble(c, stamp);
     });
     scrollChat("auto");
   }
@@ -998,17 +583,9 @@
     const text = String(rawText || "").trim();
     if (!text || !inputEl || !sendBtn || !chatEl) return;
 
-    stopSpeechSynth();
-    clearVoiceAutoSend();
-    clearVoiceResumeTimer();
     hideExercises();
 
     chatSendInFlight = true;
-    if (voiceModeActive && voiceOverlayTranscript) {
-      voiceOverlayTranscript.textContent = "";
-      voiceOverlayTranscript.classList.remove("voice-transcript-live");
-    }
-    refreshVoiceBannerAndOverlay();
 
     const now = padTime(new Date());
     addUserBubble(text, now);
@@ -1028,7 +605,6 @@
 
     sendBtn.disabled = true;
     setTyping(true);
-    beginAgentSidebarSequence();
 
     try {
       const data = await chatRequest({
@@ -1042,11 +618,10 @@
       const col = data.emotion_color || glowForEmotion(emotionKey);
       const urd = data.urdu_label || urduGuess(emotionKey);
       setEmotionUI(emotionKey, col, urd, data.emotion_emoji || null);
-      finishAgentSidebarTechnique(data.technique_used);
 
       const reply = String(data.response || "").trim();
       const stamp = padTime(data.timestamp ? new Date(data.timestamp) : new Date());
-      addAiBubble(reply || "Kuch masla aa gaya, dobara try karo.", stamp, { autoSpeak: true });
+      addAiBubble(reply || "Kuch masla aa gaya, dobara try karo.", stamp);
       history.push({
         role: "model",
         content: reply,
@@ -1059,24 +634,16 @@
       if (ex === "breathing" || ex === "grounding") showExercise(ex);
     } catch (e) {
       const net = !navigator.onLine || String(e.message || e).toLowerCase().includes("failed to fetch");
-      const errText = net
-        ? voiceModeActive
-          ? "Internet check karo yaar"
-          : "Yaar internet check karo"
-        : "Kuch masla aa gaya, dobara try karo.";
-      markAgentSidebarError(net ? "Internet check karo yaar" : "⚠️ Agent chain — dubara try karo");
-      addAiBubble(errText, padTime(new Date()), { autoSpeak: true });
+      const errText = net ? "Yaar internet check karo" : "Kuch masla aa gaya, dobara try karo.";
+      addAiBubble(errText, padTime(new Date()));
       history.push({ role: "model", content: errText, timestamp: new Date().toISOString() });
     } finally {
-      if (agentSidebarTimer) clearAgentSidebarTimer();
       chatSendInFlight = false;
       setTyping(false);
       sendBtn.disabled = false;
       resizeCanvasPixels();
       updateMoodUI();
-      refreshVoiceBannerAndOverlay();
-      refreshVoiceListeningUI(listening);
-      if (!voiceModeActive) inputEl.focus();
+      inputEl.focus();
     }
   }
 
@@ -1122,200 +689,7 @@
     historyBackdrop && historyBackdrop.setAttribute("aria-hidden", "true");
   }
 
-  function setupSpeech() {
-    if (!micBtn || !inputEl || !micStatus) return;
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      micBtn.disabled = true;
-      micStatus.textContent = "Chrome use karo voice ke liye.";
-      voiceModeToggle && (voiceModeToggle.disabled = true);
-      return;
-    }
-
-    recognition = new SR();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = "ur-PK";
-
-    recognition.onstart = () => {
-      listening = true;
-      clearVoiceNoSpeechRetry();
-      voiceLangFallbackTried = false;
-      voiceFinalAccum = "";
-      clearVoiceAutoSend();
-      micBtn.classList.add("listening");
-      micStatus.textContent = voiceModeActive ? "" : "Sun raha hun...";
-      refreshVoiceListeningUI(true);
-      refreshVoiceBannerAndOverlay();
-    };
-
-    recognition.onend = () => {
-      listening = false;
-      micBtn.classList.remove("listening");
-      refreshVoiceListeningUI(false);
-      inputEl.classList.remove("voice-interim");
-
-      const t = inputEl.value.trim();
-
-      voiceOverlayTranscript &&
-        voiceOverlayTranscript.classList.remove("voice-transcript-live");
-
-      if (voiceCyclePaused) {
-        updateSendState();
-        autoResizeTextarea();
-        refreshVoiceBannerAndOverlay();
-        return;
-      }
-
-      if (voiceOverlayTranscript && voiceModeActive) {
-        if (t.length >= 3) voiceOverlayTranscript.textContent = t;
-      }
-
-      if (t.length >= 3) {
-        if (!voiceModeActive) {
-          micStatus.textContent = "✓ Sun liya!";
-          setTimeout(() => {
-            micStatus.textContent = "";
-          }, 980);
-        } else micStatus.textContent = "";
-
-        clearVoiceAutoSend();
-        voiceAutoSendTimer = setTimeout(() => {
-          sendMessage(inputEl.value);
-          voiceAutoSendTimer = null;
-        }, voiceModeActive ? 130 : 1000);
-      } else {
-        if (micStatus.textContent.includes("Mic ka permission")) {
-          /** keep mic error visible */
-        } else if (!voiceModeActive) micStatus.textContent = "";
-        else micStatus.textContent = "";
-
-        if (t.length > 0 && t.length < 3) inputEl.value = "";
-
-        if (voiceModeActive && !voiceCyclePaused && !ttsActive && !chatSendInFlight) {
-          clearVoiceNoSpeechRetry();
-          voiceNoSpeechRetryTimer = setTimeout(() => {
-            voiceNoSpeechRetryTimer = null;
-            tryStartRecognitionAfterTtsGap();
-          }, 380);
-        }
-      }
-
-      updateSendState();
-      autoResizeTextarea();
-      refreshVoiceBannerAndOverlay();
-    };
-
-    recognition.onerror = (ev) => {
-      const code = String(ev.error || "");
-
-      if (code === "aborted") {
-        listening = false;
-        micBtn.classList.remove("listening");
-        refreshVoiceListeningUI(false);
-        return;
-      }
-
-      if (code === "not-allowed") {
-        micBtn.classList.remove("listening");
-        listening = false;
-        refreshVoiceListeningUI(false);
-        const msg = "Mic ka permission do — browser settings mein";
-        micStatus.textContent = msg;
-        if (voiceOverlayStatus && voiceModeActive) voiceOverlayStatus.textContent = msg;
-        refreshVoiceBannerAndOverlay();
-        return;
-      }
-
-      if (code === "no-speech") {
-        micBtn.classList.remove("listening");
-        listening = false;
-        refreshVoiceListeningUI(false);
-        if (voiceModeActive && !voiceCyclePaused && !chatSendInFlight && !ttsActive) {
-          clearVoiceNoSpeechRetry();
-          voiceNoSpeechRetryTimer = setTimeout(() => {
-            voiceNoSpeechRetryTimer = null;
-            tryStartRecognitionAfterTtsGap();
-          }, 420);
-        }
-        refreshVoiceBannerAndOverlay();
-        return;
-      }
-
-      if (!voiceLangFallbackTried && (code.includes("language") || code === "language-not-supported")) {
-        voiceLangFallbackTried = true;
-        try {
-          recognition.lang = "en-US";
-          recognition.start();
-        } catch (_) {}
-        return;
-      }
-
-      micBtn.classList.remove("listening");
-      listening = false;
-      refreshVoiceListeningUI(false);
-      inputEl.classList.remove("voice-interim");
-
-      micStatus.textContent = voiceModeActive ? "" : "Voice error — dubara mic dabao.";
-      if (voiceModeActive && voiceOverlayStatus && !ttsActive)
-        voiceOverlayStatus.textContent = "⚠️ Mic dubara try karo";
-      refreshVoiceBannerAndOverlay();
-    };
-
-    recognition.onresult = (ev) => {
-      let interim = "";
-      let finalAll = "";
-
-      for (let i = 0; i < ev.results.length; i++) {
-        const part = ev.results[i];
-        const transcript = part[0] && part[0].transcript ? part[0].transcript : "";
-        if (part.isFinal) finalAll += transcript;
-        else interim += transcript;
-      }
-
-      voiceFinalAccum = finalAll;
-      const combined = `${finalAll}${interim}`.trim();
-      inputEl.value = combined;
-      inputEl.classList.toggle("voice-interim", interim.trim().length > 0);
-
-      if (voiceOverlayTranscript && voiceModeActive) {
-        voiceOverlayTranscript.textContent = combined;
-        voiceOverlayTranscript.classList.toggle("voice-transcript-live", interim.trim().length > 0);
-      }
-
-      stopSpeechSynth();
-      clearVoiceAutoSend();
-      clearVoiceNoSpeechRetry();
-      autoResizeTextarea();
-      updateSendState();
-    };
-
-    micBtn.addEventListener("click", () => {
-      if (!recognition) return;
-      clearVoiceResumeTimer();
-      stopSpeechSynth();
-      clearVoiceAutoSend();
-      clearVoiceNoSpeechRetry();
-      if (listening) {
-        try {
-          recognition.stop();
-        } catch (_) {}
-        return;
-      }
-      try {
-        inputEl.value = "";
-        voiceOverlayTranscript && (voiceOverlayTranscript.textContent = "");
-        updateSendState();
-        autoResizeTextarea();
-        recognition.lang = "ur-PK";
-        voiceLangFallbackTried = false;
-        recognition.start();
-      } catch (_) {
-        micStatus.textContent = "Mic start nahi hua — Chrome check karo.";
-      }
-    });
-  }
+  // Speech / TTS removed (text-only)
 
   async function loadSessionsList() {
     if (!sessionsList) return;
@@ -1390,7 +764,6 @@
       localStorage.setItem(STORAGE_SESSION, sessionId);
       bootstrap.session_id = sessionId;
       closeHistoryPanel();
-      stopSpeechSynth();
 
       moodSeries =
         Array.isArray(data.session.mood_history) && data.session.mood_history.length
@@ -1434,7 +807,6 @@
       moodSeries = [];
       hideExercises();
       setMemoryBar("");
-      stopSpeechSynth();
 
       const msgs = Array.isArray(data.session.messages) ? data.session.messages : [];
       renderHistory(
@@ -1462,7 +834,6 @@
       if (!res.ok || !data.session_id) return;
       sessionId = data.session_id;
       localStorage.setItem(STORAGE_SESSION, sessionId);
-      stopSpeechSynth();
       await hydrateFromServer();
       closeHistoryPanel();
     } catch (_) {}
@@ -1474,74 +845,23 @@
       window.open(window.location.href, "_blank", "noopener,noreferrer");
     });
 
-  voiceMuteBtn &&
-    voiceMuteBtn.addEventListener("click", () => {
-      setVoiceMute(!isVoiceMuted());
-    });
-
-  voiceModeToggle &&
-    voiceModeToggle.addEventListener("click", () => {
-      setVoiceMode(!voiceModeActive);
-    });
-
-  voicePauseBtn &&
-    voicePauseBtn.addEventListener("click", () => {
-      if (!voiceModeActive) return;
-      voiceCyclePaused = !voiceCyclePaused;
-      voicePauseBtn.setAttribute("aria-pressed", voiceCyclePaused ? "true" : "false");
-      voicePauseBtn.textContent = voiceCyclePaused ? "▶️ Phir shuru" : "⏸️ Pause";
-      if (voiceCyclePaused) {
-        clearVoiceNoSpeechRetry();
-        clearVoiceResumeTimer();
-        try {
-          recognition && recognition.stop();
-        } catch (_) {}
-        listening = false;
-        micBtn && micBtn.classList.remove("listening");
-        refreshVoiceListeningUI(false);
-        stopSpeechSynth();
-      } else {
-        clearVoiceResumeTimer();
-        voiceResumeAfterTtsTimer = setTimeout(() => {
-          voiceResumeAfterTtsTimer = null;
-          if (voiceModeActive && !ttsActive && !chatSendInFlight) tryStartRecognitionAfterTtsGap();
-        }, 340);
-      }
-      refreshVoiceBannerAndOverlay();
-    });
-
-  voiceModeExit &&
-    voiceModeExit.addEventListener("click", () => {
-      setVoiceMode(false);
-    });
+  // Voice UI removed (text-only)
 
   sendBtn &&
     sendBtn.addEventListener("click", () => {
-      stopSpeechSynth();
-      clearVoiceAutoSend();
-      clearVoiceResumeTimer();
-      clearVoiceNoSpeechRetry();
       sendMessage(inputEl.value);
     });
 
   inputEl &&
     inputEl.addEventListener("keydown", (e) => {
-      stopSpeechSynth();
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        clearVoiceAutoSend();
-        clearVoiceResumeTimer();
-        clearVoiceNoSpeechRetry();
         sendMessage(inputEl.value);
       }
     });
 
   inputEl &&
     inputEl.addEventListener("input", () => {
-      stopSpeechSynth();
-      clearVoiceAutoSend();
-      clearVoiceResumeTimer();
-      clearVoiceNoSpeechRetry();
       autoResizeTextarea();
       updateSendState();
     });
@@ -1669,7 +989,7 @@
     });
   });
 
-  // No global voice caching; speakText() handles async voice loading.
+  // Text-only mode.
 
   /* Init */
   initTheme();
