@@ -58,6 +58,14 @@
 
         <div class="divider"></div>
 
+        <button
+          type="button"
+          class="btn-report-sidebar js-report-btn"
+          title="Apni weekly mental health report download karo"
+        >
+          📊 Meri Report
+        </button>
+
         <section class="side-block chip-stack" id="quickChips">
           <button type="button" class="chip-v" data-prompt="Aj anxiety feel ho rahi hai, dil tez dhadak raha hai.">
             😰 Anxiety hai
@@ -86,6 +94,14 @@
         <button type="button" id="navOpenBtn" class="icon-circle hamburger-only" aria-label="Open menu">☰</button>
         <h2 class="top-bar-title">Sukoon AI</h2>
         <div class="top-bar-actions">
+          <button
+            type="button"
+            class="icon-circle btn-report-compact js-report-btn"
+            title="Apni weekly mental health report download karo"
+            aria-label="Meri weekly report"
+          >
+            📊
+          </button>
           <button type="button" id="voiceMuteBtn" class="icon-circle" aria-pressed="false" aria-label="Mute AI voice">🔊</button>
           <button type="button" id="themeToggle" class="icon-circle" aria-label="Toggle theme">🌙</button>
           <button type="button" id="openSidebarBtn" class="icon-circle" aria-label="Past sessions">📋</button>
@@ -141,6 +157,7 @@
         </div>
 
         <div class="composer">
+          <p id="reportHint" class="report-hint" aria-live="polite"></p>
           <p id="micStatus" class="voice-status" aria-live="polite"></p>
           <div class="composer-row">
             <button type="button" id="micBtn" class="btn-mic" aria-label="Voice input">🎤</button>

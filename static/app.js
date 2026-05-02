@@ -24,6 +24,7 @@
   const sendBtn = $("sendBtn");
   const micBtn = $("micBtn");
   const micStatus = $("micStatus");
+  const reportHint = $("reportHint");
   const moodSlider = $("moodSlider");
   const moodEmoji = $("moodEmoji");
   const moodValue = $("moodValue");
@@ -1066,6 +1067,85 @@
       if (breathingOn) stopBreathing();
       else toggleBreathing(true);
     });
+
+  async function generateReport() {
+    const btns = document.querySelectorAll(".js-report-btn");
+    if (!btns.length) return;
+
+    btns.forEach((b) => {
+      if (!b.dataset.reportHtml) b.dataset.reportHtml = b.innerHTML;
+    });
+
+    btns.forEach((b) => {
+      b.disabled = true;
+      b.classList.add("is-loading");
+      b.innerHTML =
+        '<span class="spinner-ring" aria-hidden="true"></span> Report ban rahi hai...';
+    });
+
+    if (reportHint) {
+      reportHint.textContent = "📊 Aapki report ban rahi hai...";
+    }
+
+    try {
+      const res = await fetch("/generate-report", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+
+      if (!res.ok) {
+        let msg = "Kuch masla aa gaya.";
+        try {
+          const j = await res.json();
+          if (j && j.error) msg = String(j.error);
+        } catch (_) {}
+        if (reportHint) reportHint.textContent = msg;
+        return;
+      }
+
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/pdf")) {
+        if (reportHint) reportHint.textContent = "Unexpected response — dubara try karo.";
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      a.download = `Sukoon-AI-Report-${y}-${m}-${day}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      if (reportHint) reportHint.textContent = "✅ Report download ho gayi!";
+      setTimeout(() => {
+        if (reportHint) reportHint.textContent = "";
+      }, 4200);
+    } catch (_) {
+      if (reportHint) reportHint.textContent = "Network masla — dubara try karo.";
+    } finally {
+      btns.forEach((b) => {
+        b.disabled = false;
+        b.classList.remove("is-loading");
+        b.innerHTML = b.dataset.reportHtml || "";
+      });
+    }
+  }
+
+  document.querySelectorAll(".js-report-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      closeLeftNav();
+      generateReport();
+    });
+  });
 
   if (window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = () => {};

@@ -7,14 +7,24 @@ import os
 import traceback
 import uuid
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, send_file, session
 from flask_cors import CORS
 
 import google.generativeai as genai
 from google.api_core import exceptions as gexc
+
+from weekly_report import (
+    build_weekly_report_pdf,
+    compute_mood_values,
+    compute_trend_label,
+    default_insights,
+    heuristic_emotions_for_chart,
+    merge_emotion_counts,
+)
 
 def _load_gemini_api_key() -> str:
     """Prefer GEMINI_API_KEY; strip whitespace; optional GOOGLE_API_KEY fallback."""
@@ -496,6 +506,151 @@ class MentalHealthAgent:
         }
 
 
+def _report_meaningful_user_turns(doc: dict[str, Any]) -> int:
+    count = 0
+    for m in doc.get("messages") or []:
+        if not isinstance(m, dict):
+            continue
+        if _safe_str(m.get("role")).lower() != "user":
+            continue
+        if len(_safe_str(m.get("content"))) >= 8:
+            count += 1
+    return count
+
+
+def session_report_eligible(doc: dict[str, Any]) -> bool:
+    return _report_meaningful_user_turns(doc) >= 2
+
+
+def serialize_session_for_report(doc: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for m in doc.get("messages") or []:
+        if not isinstance(m, dict):
+            continue
+        role_ui = "user" if _safe_str(m.get("role")).lower() == "user" else "assistant"
+        content = _safe_str(m.get("content"))
+        ts = _safe_str(m.get("timestamp"), max_len=42)
+        if content:
+            lines.append(f"[{ts}] {role_ui}: {content}")
+    lines.append("\n--- Mood snapshots (value 1–10) ---")
+    mh = doc.get("mood_history") or []
+    if isinstance(mh, list):
+        for row in mh[-40:]:
+            if isinstance(row, dict):
+                lines.append(f"  {_safe_str(row.get('timestamp'))} -> {_safe_str(row.get('value'))}")
+    lines.append(f"\nLast tagged emotion keyword: {_safe_str(doc.get('last_emotion'))}")
+    return "\n".join(lines)[:14000]
+
+
+def gemini_weekly_report_insights(history_blob: str) -> dict[str, Any]:
+    spec = (
+        "Analyze this user's mental health conversation history and generate a compassionate weekly summary "
+        "in Roman Urdu and English mixed. Never sound clinical.\n\n"
+        "Return ONLY valid JSON:\n"
+        "{\n"
+        '  "mood_trend": "improving"|"declining"|"stable",\n'
+        '  "trend_arrow_label": "short Roman Urdu label with ↑ or ↓ or → arrow",\n'
+        '  "warm_analysis": "2-4 sentences, warm paragraph",\n'
+        '  "common_emotions": [{"emotion":"anxiety"|"sad"|"stressed"|"angry"|"okay"|"happy","count":2}, ...],\n'
+        '  "stressors": ["family","studies","work","relationships"] as keywords actually implied,\n'
+        '  "positive_observations": ["...", "...", "..."],\n'
+        '  "recommendations": ["...", "...", "..."],\n'
+        '  "motivational_message": "one Roman Urdu line"\n'
+        "}\n"
+    )
+    prompt = spec + "\nHistory:\n" + history_blob
+    raw_out = ""
+
+    for name in COMPLETION_MODELS:
+        try:
+            model = genai.GenerativeModel(model_name=name)
+            res = model.generate_content(prompt)
+            raw_out = _safe_str(getattr(res, "text", ""), max_len=24000)
+            if raw_out:
+                break
+        except gexc.NotFound:
+            continue
+        except Exception as e:
+            if _is_quota_or_rate_limit(e):
+                print("weekly-report quota:", e)
+                traceback.print_exc()
+                continue
+            traceback.print_exc()
+            break
+
+    if not raw_out:
+        return {}
+
+    try:
+        return dict(json.loads(_extract_first_json_object(raw_out)))
+    except Exception as e:
+        print("weekly-report JSON:", e)
+        traceback.print_exc()
+        return {}
+
+
+def build_weekly_insights_for_pdf(doc: dict[str, Any], ai: dict[str, Any]) -> dict[str, Any]:
+    text_blob = " ".join(
+        _safe_str(m.get("content")) for m in doc.get("messages") or [] if isinstance(m, dict)
+    ).lower()
+
+    mood_vals = compute_mood_values(doc.get("mood_history"))
+    defaults = default_insights(text_blob, mood_vals)
+
+    msgs_ts = [_safe_str(x.get("timestamp")) for x in (doc.get("messages") or []) if isinstance(x, dict) and x.get("timestamp")]
+    if len(msgs_ts) >= 2:
+        week_label = f"{msgs_ts[0][:10]} → {msgs_ts[-1][:10]}"
+    else:
+        week_label = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    merged_emo = merge_emotion_counts(ai.get("common_emotions"), heuristic_emotions_for_chart(text_blob))
+
+    trend_lbl = _safe_str(ai.get("trend_arrow_label"))
+    if not trend_lbl:
+        trend_lbl = compute_trend_label(mood_vals)
+
+    warm = _safe_str(ai.get("warm_analysis")) or defaults["warm_analysis"]
+
+    stressors_ai = ai.get("stressors")
+    stress_clean: list[str] = []
+    if isinstance(stressors_ai, list):
+        stress_clean = [_safe_str(x, max_len=80) for x in stressors_ai if _safe_str(x)]
+    if not stress_clean:
+        stress_clean = list(defaults["stressors"])
+
+    pos_ai = ai.get("positive_observations")
+    positives: list[str] = []
+    if isinstance(pos_ai, list):
+        positives = [_safe_str(x, max_len=500) for x in pos_ai if _safe_str(x)]
+    i = 0
+    while len(positives) < 3:
+        positives.append(defaults["positive_observations"][i % len(defaults["positive_observations"])])
+        i += 1
+
+    rec_ai = ai.get("recommendations")
+    recs: list[str] = []
+    if isinstance(rec_ai, list):
+        recs = [_safe_str(x, max_len=500) for x in rec_ai if _safe_str(x)]
+    j = 0
+    while len(recs) < 3:
+        recs.append(defaults["recommendations"][j % len(defaults["recommendations"])])
+        j += 1
+
+    mot = _safe_str(ai.get("motivational_message")) or defaults["motivational_message"]
+
+    return {
+        "week_label": week_label[:120],
+        "mood_values": mood_vals,
+        "trend_arrow_label": trend_lbl[:200],
+        "emotion_freq": merged_emo,
+        "warm_analysis": warm[:2500],
+        "stressors": stress_clean[:10],
+        "positive_observations": positives[:5],
+        "recommendations": recs[:5],
+        "motivational_message": mot[:900],
+    }
+
+
 agent = MentalHealthAgent()
 
 app = Flask(__name__)
@@ -755,6 +910,52 @@ def clear_all_sessions_route():
         print("/clear-all-sessions:", e)
         traceback.print_exc()
         return jsonify(_friendly_error_payload("Sab saf nahi kar paye."))
+
+
+@app.post("/generate-report")
+def generate_weekly_report_route():
+    """Build AI-analyzed weekly wellness PDF for the current session."""
+    try:
+        if not GEMINI_API_KEY:
+            return jsonify(_friendly_error_payload("GEMINI_API_KEY server par set nahi hai.")), 503
+
+        payload = request.get_json(silent=True) or {}
+        sid = _safe_str(payload.get("session_id"), max_len=80) or session.get("session_id")
+        if not sid:
+            return jsonify(_friendly_error_payload("Session nahi mila.")), 400
+
+        doc = load_session_doc(sid)
+        if not session_report_eligible(doc):
+            return jsonify(
+                _friendly_error_payload("Pehle thodi baat karo, phir report banegi! 😊"),
+            ), 400
+
+        hist_blob = serialize_session_for_report(doc)
+        ai_struct = gemini_weekly_report_insights(hist_blob)
+        insights_pack = build_weekly_insights_for_pdf(doc, ai_struct)
+        pdf_bytes = build_weekly_report_pdf(doc, insights_pack)
+
+        fname = f"Sukoon-AI-Report-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.pdf"
+        buf = BytesIO(pdf_bytes)
+        buf.seek(0)
+        try:
+            return send_file(
+                buf,
+                mimetype="application/pdf",
+                as_attachment=True,
+                download_name=fname,
+            )
+        except TypeError:
+            return send_file(
+                buf,
+                mimetype="application/pdf",
+                as_attachment=True,
+                attachment_filename=fname,
+            )
+    except Exception as e:
+        print("/generate-report:", e)
+        traceback.print_exc()
+        return jsonify(_friendly_error_payload("Report nahi ban saki — thori dair baad try karo.")), 500
 
 
 if __name__ == "__main__":
