@@ -33,12 +33,12 @@ EMOTION_COLORS: dict[str, str] = {
     "happy": "#FBBF24",
 }
 EMOTION_EMOJI: dict[str, str] = {
-    "anxiety": "😰",
-    "sad": "😢",
-    "stressed": "😤",
-    "angry": "😡",
-    "okay": "😐",
-    "happy": "😊",
+    "anxiety": "ANX",
+    "sad": "SAD",
+    "stressed": "STR",
+    "angry": "ANG",
+    "okay": "OK",
+    "happy": "HAP",
 }
 URDU_LABELS: dict[str, str] = {
     "anxiety": "پریشانی",
@@ -208,7 +208,7 @@ def therapy_fallback_bundle(message: str, emotion_data: dict[str, Any]) -> dict[
 
     if not u:
         reply = (
-            "Thori detail aur likho ta jawab DIRECT tumhari situation pe latch ho 🤍 "
+            "Thori detail aur likho ta jawab direct tumhari situation pe ho. "
             + tail_q
         )
     else:
@@ -451,7 +451,7 @@ class MemoryAgent:
         env = self._load_envelope(safe_str(session_id, max_len=80))
         prof = env.get("profile") if isinstance(env.get("profile"), dict) else {}
         if not prof:
-            return "Abhi zyada profile detail nahi mili 😊."
+            return "Abhi zyada profile detail nahi mili."
 
         pj = json.dumps(prof, ensure_ascii=False)
         prompt = (
@@ -474,7 +474,7 @@ class MemoryAgent:
             chunks.append(f"{safe_str(str(prof.get('city')))} se")
         if prof.get("issues") and isinstance(prof["issues"], list) and prof["issues"]:
             chunks.append("masle: " + ", ".join(safe_str(str(x)) for x in prof["issues"][:3]))
-        return "Profile: " + " · ".join(chunks) if chunks else "Abhi zyada profile detail nahi mili 😊."
+        return "Profile: " + " · ".join(chunks) if chunks else "Abhi zyada profile detail nahi mili."
 
 
 class EmotionAgent:
@@ -631,35 +631,26 @@ class TherapyAgent:
         mem = safe_str(memory_context, max_len=2200).replace('"', "'")
         mood_disp = mood if isinstance(mood, int) else "unknown"
 
-        # Roman Urdu system prompt + plain-text generation (NO JSON parsing).
-        system_prompt = (
-            "Tu Sukoon AI hai — Pakistani mental health support chatbot.\n"
-            "- Roman Urdu mein jawab de\n"
-            "- User ki exact situation ke baare mein baat kar\n"
-            "- Har response naturally alag hoga kyunki situation alag hai\n"
-            "- 2-3 lines max\n"
-            "- End mein ek specific sawal poocho us ki situation se related\n"
-            "- Koi fixed template mat use karo\n"
-            "- Koi \"Quick win\" format mat use karo\n"
-            "- Koi \"yehi jagah pakad ke chalenge\" mat likho\n"
-        )
-
-        # IMPORTANT: no examples/templates in prompt. Only user input + light context.
+        # PLAIN Roman Urdu prompt (no examples/templates, no JSON).
         prompt = (
-            f"Memory context: {mem}\n"
+            "Tu Sukoon AI hai. Ek samajhdar Pakistani dost ki tarah baat kar.\n"
+            "Sirf Roman Urdu mein jawab de.\n"
+            "2-3 lines mein jawab do — chhota aur direct.\n"
+            "User jo keh raha hai bilkul usi ke baare mein baat kar.\n"
+            "Har baar naturally alag jawab do kyunki situation alag hai.\n"
+            "End mein sirf ek specific sawal poocho us ki situation se.\n"
+            "Koi fixed format nahi. Koi template nahi. Koi repeated phrases nahi.\n\n"
+            f"User: {user_msg}\n"
+            f"Memory: {mem}\n"
             f"Emotion: {safe_str(emotion_data.get('primary_emotion', 'okay'), max_len=24)}\n"
-            f"Mood: {mood_disp}/10\n\n"
-            f'User: "{user_msg}"'
+            f"Mood: {mood_disp}/10\n"
         )
 
         try:
             gen_cfg = _generation_config(temperature=0.9, max_output_tokens=220)
             for model_name in (self._preferred_model, AGENT_MODEL_FALLBACK):
                 try:
-                    model = genai.GenerativeModel(
-                        model_name=model_name,
-                        system_instruction=system_prompt,
-                    )
+                    model = genai.GenerativeModel(model_name=model_name)
                     if gen_cfg is not None:
                         resp = model.generate_content(prompt, generation_config=gen_cfg)
                     else:
@@ -699,7 +690,7 @@ class OrchestratorAgent:
         sid = safe_str(session_id, max_len=80)
         if not msg or not sid:
             return {
-                "response": "Kuch likho to sahi — main sun rahi hun 🤍",
+                "response": "Kuch likho to sahi — main sun rahi hun.",
                 "emotion": "okay",
                 "color": EMOTION_COLORS["okay"],
                 "urdu_label": URDU_LABELS["okay"],
@@ -722,11 +713,11 @@ class OrchestratorAgent:
         severity = safe_str(str(crisis.get("severity", "low"))).lower()
 
         emergency = (
-            "Main tumhari baat sunkar behad fikar-mand hun 🤍 Tum bilkul akelay nahi ho."
+            "Main tumhari baat sunkar behad fikar-mand hun. Tum bilkul akelay nahi ho."
             "\nPLEASE abhi Umang Crisis Helpline pe call lagao ya message karo — trained log hamesha khade hote hain: "
             "**0317-4288665**.\n"
             'Agar khatra abhi aur zyada ho to **1122** ya apne qareebi hospital/emergency.'
-            '\nHum phir baat zaroor karenge jab tum thori hifazat mein hou — main yahi hun 💜'
+            "\nHum phir baat zaroor karenge jab tum thori hifazat mein ho."
         )
 
         if crisis.get("is_crisis") and severity == "high":
@@ -798,7 +789,7 @@ class OrchestratorAgent:
         reply = safe_str(ther.get("response", ""), max_len=8000)
         if crisis.get("is_crisis") and severity == "medium" and emergency[:40] not in reply:
             reply = (
-                "Dil pe bohat bojh lag raha hai — pehle apni hifazat zaroori hai 🤍 "
+                "Dil pe bohat bojh lag raha hai — pehle apni hifazat zaroori hai. "
                 "Agar dil mein khatray wali soch aaye to **Umang 0317-4288665** abhi try karo.\n\n" + reply
             )
 

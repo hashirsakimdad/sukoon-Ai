@@ -53,6 +53,9 @@
   const voiceOverlayEmoji = $("voiceOverlayEmoji");
   const voiceOverlayUrdu = $("voiceOverlayUrdu");
   const chatFlexWrap = document.querySelector(".chat-flex");
+  const heroIntro = $("heroIntro");
+  const heroStartBtn = $("heroStartBtn");
+  const appMain = $("appMain");
   const memoryBar = $("memoryBar");
   const memoryInsightText = $("memoryInsightText");
   const clearHistoryBtn = $("clearHistoryBtn");
@@ -92,7 +95,7 @@
     if (!agentStatusLine) return;
     clearAgentSidebarTimer();
     if (agentTechniqueLine) agentTechniqueLine.textContent = "";
-    const phases = ["🔍 Emotion Agent...", "💾 Memory Agent...", "💬 Therapy Agent..."];
+    const phases = ["Emotion Agent...", "Memory Agent...", "Therapy Agent..."];
     let step = 0;
     agentStatusLine.textContent = phases[0];
     agentSidebarTimer = window.setInterval(() => {
@@ -103,10 +106,10 @@
 
   function finishAgentSidebarTechnique(techniqueUsed) {
     clearAgentSidebarTimer();
-    if (agentStatusLine) agentStatusLine.textContent = "✅ Response ready!";
+    if (agentStatusLine) agentStatusLine.textContent = "Response ready.";
     if (agentTechniqueLine) {
       const t = techniqueUsed ? String(techniqueUsed).trim() : "";
-      agentTechniqueLine.textContent = t ? `💡 CBT Technique: ${t}` : "";
+      agentTechniqueLine.textContent = t ? `CBT Technique: ${t}` : "";
     }
   }
 
@@ -117,19 +120,19 @@
   }
 
   const EMOJI_BY_MOOD = (n) => {
-    if (n <= 3) return "😔";
-    if (n <= 5) return "😐";
-    if (n <= 7) return "🙂";
-    return "😊";
+    if (n <= 3) return "Low";
+    if (n <= 5) return "OK";
+    if (n <= 7) return "Good";
+    return "High";
   };
 
   const EMOTION_ICONS = {
-    anxiety: "😰",
-    sad: "😢",
-    stressed: "😤",
-    angry: "😡",
-    okay: "😐",
-    happy: "😊",
+    anxiety: "ANX",
+    sad: "SAD",
+    stressed: "STR",
+    angry: "ANG",
+    okay: "OK",
+    happy: "HAP",
   };
 
   /** @type {SpeechRecognition | null} */
@@ -145,8 +148,7 @@
   /** @type {ReturnType<typeof setTimeout> | null} */
   let voiceNoSpeechRetryTimer = null;
 
-  /** @type {SpeechSynthesisVoice[]} */
-  let availableVoices = [];
+  // voices are read from speechSynthesis.getVoices() inside speakText()
   let voiceModeActive = false;
   let voiceCyclePaused = false;
   let chatSendInFlight = false;
@@ -424,6 +426,8 @@
 
   /** -------- Voice (STT / TTS / Voice Mode) -------- */
 
+  const synth = window.speechSynthesis;
+
   let ttsGen = 0;
 
   function isVoiceMuted() {
@@ -440,7 +444,7 @@
   function updateMuteButtonUI() {
     if (!voiceMuteBtn) return;
     const muted = isVoiceMuted();
-    voiceMuteBtn.textContent = muted ? "🔇" : "🔊";
+    voiceMuteBtn.textContent = muted ? "Muted" : "Voice";
     voiceMuteBtn.setAttribute("aria-pressed", muted ? "true" : "false");
     voiceMuteBtn.title = muted ? "Unmute AI voice" : "Mute AI voice";
     voiceMuteBtn.classList.toggle("is-muted", muted);
@@ -450,31 +454,56 @@
     ttsGen += 1;
     ttsActive = false;
     try {
-      window.speechSynthesis && window.speechSynthesis.cancel();
+      synth && synth.cancel();
     } catch (_) {}
   }
 
-  function refreshSpeechVoices() {
-    try {
-      if (!window.speechSynthesis) {
-        availableVoices = [];
+  // Requested female-voice TTS (plain Web Speech API)
+  function speakText(text) {
+    return new Promise((resolve) => {
+      const t = String(text || "").trim();
+      if (!t || !synth || isVoiceMuted()) {
+        resolve();
         return;
       }
-      availableVoices = window.speechSynthesis.getVoices() || [];
-    } catch (_) {
-      availableVoices = [];
-    }
-  }
 
-  function pickSpeechVoice() {
-    const voices = availableVoices.length ? availableVoices : window.speechSynthesis?.getVoices() || [];
-    const ur = voices.find((v) => v.lang && String(v.lang).toLowerCase().includes("ur")) || null;
-    const pk =
-      voices.find((v) => v.lang === "en-PK") ||
-      voices.find((v) => v.lang && String(v.lang).toLowerCase() === "en-pk") ||
-      null;
-    const en = voices.find((v) => v.lang && String(v.lang).toLowerCase().includes("en")) || null;
-    return ur || pk || en || voices[0] || null;
+      synth.cancel();
+      const utterance = new SpeechSynthesisUtterance(t);
+
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+
+      function setVoice() {
+        const voices = synth.getVoices();
+
+        const femaleVoice = voices.find(
+          (v) =>
+            v.name.includes("Zira") ||
+            v.name.includes("Heera") ||
+            v.name.includes("Samantha") ||
+            v.name.includes("Karen") ||
+            v.name.includes("Moira") ||
+            v.name.includes("Susan") ||
+            v.name.toLowerCase().includes("female"),
+        );
+
+        if (femaleVoice) {
+          utterance.voice = femaleVoice;
+        }
+
+        utterance.rate = 0.9;
+        utterance.pitch = 1.1;
+        utterance.volume = 1.0;
+
+        synth.speak(utterance);
+      }
+
+      if (synth.getVoices().length > 0) {
+        setVoice();
+      } else {
+        synth.onvoiceschanged = setVoice;
+      }
+    });
   }
 
   function splitSpeakChunks(text) {
@@ -528,13 +557,11 @@
   function speakAiResponse(text, onComplete) {
     const cb = typeof onComplete === "function" ? onComplete : () => {};
     const raw = String(text || "").trim();
-    refreshSpeechVoices();
-
     if (!raw) {
       cb();
       return;
     }
-    if (!window.speechSynthesis) {
+    if (!synth) {
       if (voiceModeActive && micStatus) {
         micStatus.textContent = "TTS unsupported — sirf text.";
         setTimeout(() => {
@@ -553,7 +580,6 @@
     }
 
     const chunks = splitSpeakChunks(raw);
-    const voicePick = pickSpeechVoice();
     let idx = 0;
     ttsActive = true;
     refreshVoiceListeningUI(false);
@@ -574,23 +600,9 @@
       }
       const line = chunks[idx];
       idx += 1;
-      try {
-        const u = new SpeechSynthesisUtterance(line);
-        u.rate = 0.82;
-        u.pitch = 1.05;
-        u.volume = 1;
-        if (voicePick) {
-          u.voice = voicePick;
-          u.lang = voicePick.lang || "ur-PK";
-        } else {
-          u.lang = "ur-PK";
-        }
-        u.onend = () => next();
-        u.onerror = () => next();
-        window.speechSynthesis.speak(u);
-      } catch (_) {
-        next();
-      }
+      speakText(line)
+        .then(() => next())
+        .catch(() => next());
     };
 
     refreshVoiceBannerAndOverlay();
@@ -657,21 +669,21 @@
       if (voiceCyclePaused) {
         voiceOverlayStatus.textContent = "⏸️ Ruk gaya";
       } else if (ttsActive) {
-        voiceOverlayStatus.textContent = "🔊 Sun lo...";
+        voiceOverlayStatus.textContent = "Sun lo...";
       } else if (chatSendInFlight) {
-        voiceOverlayStatus.textContent = "💭 Soch raha hun...";
+        voiceOverlayStatus.textContent = "Soch raha hun...";
       } else if (listening) {
-        voiceOverlayStatus.textContent = "🎙️ Bol sakte ho...";
+        voiceOverlayStatus.textContent = "Bol sakte ho...";
       } else {
-        voiceOverlayStatus.textContent = "🎙️ Bol sakte ho...";
+        voiceOverlayStatus.textContent = "Bol sakte ho...";
       }
     }
 
     if (voiceModeBanner && voiceModeActive) {
       if (voiceCyclePaused) voiceModeBanner.textContent = "⏸️ Voice Mode — Pause";
-      else if (ttsActive) voiceModeBanner.textContent = "🔊 Voice Mode — Sun lo!";
-      else if (chatSendInFlight) voiceModeBanner.textContent = "💭 Voice Mode — Soch raha hun...";
-      else voiceModeBanner.textContent = "🟢 Voice Mode — Bol sakte ho!";
+      else if (ttsActive) voiceModeBanner.textContent = "Voice Mode — Sun lo!";
+      else if (chatSendInFlight) voiceModeBanner.textContent = "Voice Mode — Soch raha hun...";
+      else voiceModeBanner.textContent = "Voice Mode — Bol sakte ho!";
     }
   }
 
@@ -755,7 +767,7 @@
     const av = document.createElement("div");
     av.className = "avatar-teal";
     av.setAttribute("aria-hidden", "true");
-    av.textContent = "🧠";
+    av.textContent = "AI";
 
     const bubble = document.createElement("div");
     bubble.className = "bubble-ai";
@@ -772,7 +784,7 @@
     speakBtn.type = "button";
     speakBtn.className = "msg-speak-btn";
     speakBtn.setAttribute("aria-label", "Play message");
-    speakBtn.textContent = "🔊";
+    speakBtn.textContent = "Speak";
     speakBtn.addEventListener("click", (e) => {
       e.preventDefault();
       speakAiResponse(content, () => {});
@@ -995,7 +1007,7 @@
       const errText = net
         ? voiceModeActive
           ? "Internet check karo yaar"
-          : "Yaar internet check karo 🤍"
+          : "Yaar internet check karo"
         : "Kuch masla aa gaya, dobara try karo.";
       markAgentSidebarError(net ? "Internet check karo yaar" : "⚠️ Agent chain — dubara try karo");
       addAiBubble(errText, padTime(new Date()), { autoSpeak: true });
@@ -1018,7 +1030,7 @@
     document.body.classList.toggle("theme-light", t === "light");
     document.body.classList.toggle("theme-dark", t === "dark");
     localStorage.setItem("sukoon_theme", t);
-    if (themeToggle) themeToggle.textContent = t === "light" ? "🌙" : "☀️";
+    if (themeToggle) themeToggle.textContent = t === "light" ? "Dark" : "Light";
     resizeCanvasPixels();
     drawMoodChart();
   }
@@ -1078,7 +1090,7 @@
       voiceFinalAccum = "";
       clearVoiceAutoSend();
       micBtn.classList.add("listening");
-      micStatus.textContent = voiceModeActive ? "" : "🔴 Sun raha hun...";
+      micStatus.textContent = voiceModeActive ? "" : "Sun raha hun...";
       refreshVoiceListeningUI(true);
       refreshVoiceBannerAndOverlay();
     };
@@ -1539,7 +1551,7 @@
     });
 
     if (reportHint) {
-      reportHint.textContent = "📊 Aapki report ban rahi hai...";
+      reportHint.textContent = "Aapki report ban rahi hai...";
     }
 
     try {
@@ -1602,12 +1614,7 @@
     });
   });
 
-  if (window.speechSynthesis) {
-    window.speechSynthesis.onvoiceschanged = () => {
-      refreshSpeechVoices();
-    };
-    refreshSpeechVoices();
-  }
+  // No global voice caching; speakText() handles async voice loading.
 
   /* Init */
   initTheme();
@@ -1615,6 +1622,26 @@
   setupSpeech();
   setEmotionUI("okay", glowForEmotion("okay"), urduGuess("okay"));
   setMemoryBar(bootstrap.latest_memory_insight || "");
+
+  // Hero intro: show before chat loads.
+  if (heroStartBtn && heroIntro && appMain) {
+    const startApp = () => {
+      heroIntro.classList.add("is-fading");
+      appMain.classList.remove("app-main-hidden");
+      appMain.classList.add("app-main-visible");
+      window.setTimeout(() => {
+        heroIntro.style.display = "none";
+      }, 650);
+    };
+    heroStartBtn.addEventListener("click", startApp);
+    // Safety: if user refreshes and wants immediate access, allow Esc to skip.
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") startApp();
+    });
+  } else if (appMain) {
+    appMain.classList.remove("app-main-hidden");
+    appMain.classList.add("app-main-visible");
+  }
 
   if (history.length) renderHistory(history);
   else renderHistory([]);

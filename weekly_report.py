@@ -241,7 +241,7 @@ def default_insights(blob: str, mood_vals: list[float]) -> dict[str, Any]:
             "Ek safe dost / cousin se haal puso.",
             "Screen se 1 ghanta pehle phone band — neend better hoti hai.",
         ],
-        "motivational_message": "Ek qadam roz kaafi hai. Tum deserving ho araam aur sukoon ke 🤍",
+        "motivational_message": "Ek qadam roz kaafi hai. Tum araam aur sukoon deserve karte ho.",
         "trend_arrow_label": compute_trend_label(mood_vals),
         "emotion_freq": fv,
     }
@@ -269,187 +269,317 @@ def heuristic_emotions_for_chart(blob: str) -> dict[str, int]:
 
 
 def build_weekly_report_pdf(doc: dict[str, Any], insights: dict[str, Any]) -> bytes:
+    """
+    Professional A4 weekly report.
+    Layout: Platypus + reportlab.graphics charts. Margins: 40px.
+    """
+    from datetime import datetime
+
+    from reportlab.graphics.charts.barcharts import VerticalBarChart
+    from reportlab.graphics.charts.lineplots import LinePlot
+    from reportlab.graphics.charts.textlabels import Label
+
     buf = BytesIO()
     base = getSampleStyleSheet()
 
+    MARGIN = 40  # px/pt
     pdf = SimpleDocTemplate(
         buf,
         pagesize=A4,
-        rightMargin=16 * mm,
-        leftMargin=16 * mm,
-        topMargin=14 * mm,
-        bottomMargin=14 * mm,
-        title="Sukoon AI Weekly Report",
+        rightMargin=MARGIN,
+        leftMargin=MARGIN,
+        topMargin=MARGIN,
+        bottomMargin=MARGIN,
+        title="Sukoon AI Weekly Mental Health Report",
     )
 
-    cover_title = ParagraphStyle(
-        "rt",
+    header_bg = HexColor("#7c6af7")
+    teal = HexColor("#4ecdc4")
+
+    title_style = ParagraphStyle(
+        "t1",
         parent=base["Heading1"],
         fontName=FONT_BOLD,
-        fontSize=19,
+        fontSize=20,
         textColor=WHITE,
-        alignment=TA_CENTER,
+        alignment=TA_LEFT,
         leading=24,
+        spaceAfter=2,
     )
-    cover_sub = ParagraphStyle(
-        "rs",
+    sub_style = ParagraphStyle(
+        "t2",
         parent=base["Normal"],
         fontName=FONT,
-        fontSize=10,
-        textColor=HexColor("#EDE9FE"),
-        alignment=TA_CENTER,
-        leading=13,
+        fontSize=11,
+        textColor=HexColor("#F3F4FF"),
+        alignment=TA_LEFT,
+        leading=14,
+        spaceAfter=0,
     )
     h2 = ParagraphStyle(
-        "h2",
+        "h2n",
         parent=base["Heading2"],
         fontName=FONT_BOLD,
         fontSize=13,
-        textColor=PRIMARY,
+        textColor=HexColor("#0f172a"),
         spaceBefore=14,
         spaceAfter=8,
         leading=16,
     )
     body = ParagraphStyle(
-        "bd",
+        "bdn",
         parent=base["Normal"],
         fontName=FONT,
-        fontSize=10,
-        textColor=TEXT_BODY,
+        fontSize=10.5,
+        textColor=HexColor("#0f172a"),
         leading=14,
         alignment=TA_LEFT,
     )
-    quote = ParagraphStyle(
-        "qt",
+    small = ParagraphStyle(
+        "sm",
         parent=base["Normal"],
         fontName=FONT,
-        fontSize=11,
-        textColor=WHITE,
-        alignment=TA_CENTER,
-        leading=15,
-    )
-    foot = ParagraphStyle(
-        "ft",
-        parent=base["Normal"],
-        fontName=FONT,
-        fontSize=8,
-        textColor=TEXT_MUTED,
-        alignment=TA_CENTER,
-        leading=10,
+        fontSize=9,
+        textColor=HexColor("#334155"),
+        leading=12,
+        alignment=TA_LEFT,
     )
 
-    full_w = A4[0] - 32 * mm
+    # --- derive user + dates ---
+    extracted = doc.get("extracted_facts") if isinstance(doc.get("extracted_facts"), dict) else {}
+    user_name = _xml_escape(str(extracted.get("name") or "").strip()) or "User"
 
+    def _parse_dt(s: Any) -> datetime | None:
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    msg_ts = [_parse_dt(m.get("timestamp")) for m in (doc.get("messages") or []) if isinstance(m, dict)]
+    msg_ts = [t for t in msg_ts if t is not None]
+    if msg_ts:
+        start_dt = min(msg_ts)
+        end_dt = max(msg_ts)
+        date_range = f"{start_dt.strftime('%d %b %Y')} - {end_dt.strftime('%d %b %Y')}"
+    else:
+        date_range = "This week"
+
+    # mood series
+    mh = doc.get("mood_history") if isinstance(doc.get("mood_history"), list) else []
+    mood_points: list[tuple[str, float]] = []
+    for row in mh[-14:]:
+        if not isinstance(row, dict):
+            continue
+        v = row.get("value")
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        fv = max(1.0, min(10.0, fv))
+        dt = _parse_dt(row.get("timestamp"))
+        lbl = dt.strftime('%d %b') if dt else "?"
+        mood_points.append((lbl, fv))
+    if not mood_points:
+        mood_points = [("?", 5.0)]
+
+    mood_vals = [v for _, v in mood_points]
+    avg_mood = round(sum(mood_vals) / len(mood_vals), 1) if mood_vals else 0.0
+    best_i = max(range(len(mood_vals)), key=lambda i: mood_vals[i]) if mood_vals else 0
+    worst_i = min(range(len(mood_vals)), key=lambda i: mood_vals[i]) if mood_vals else 0
+
+    # emotion breakdown
+    ef = insights.get("emotion_freq") if isinstance(insights.get("emotion_freq"), dict) else {}
+    mapped = {
+        "Khush": int(ef.get("happy", 0) or 0),
+        "Udaas": int(ef.get("sad", 0) or 0),
+        "Anxious": int(ef.get("anxiety", 0) or 0),
+        "Gussa": int(ef.get("angry", 0) or 0),
+        "Neutral": int(ef.get("okay", 0) or 0),
+    }
+    if sum(mapped.values()) == 0:
+        mapped["Neutral"] = 1
+    dominant_em = max(mapped.items(), key=lambda kv: kv[1])[0]
+
+    # sessions count (user turns)
+    total_sessions = 0
+    for m in doc.get("messages") or []:
+        if isinstance(m, dict) and str(m.get("role", "")).lower() == "user" and str(m.get("content", "")).strip():
+            total_sessions += 1
+
+    # tips based on dominant
+    tips_map = {
+        "Udaas": [
+            "Roz 10 minute dhoop mein baithein.",
+            "Aaj ek choti walk ya halka sa stretch try karein.",
+            "Ek apne insaan ko chota sa message kar dein.",
+        ],
+        "Anxious": [
+            "Box breathing try karein — 4 second in, 4 hold, 4 out.",
+            "Jo cheezein control mein hain unki short list bana lein.",
+            "Coffee/energy drinks thore kam kar dein (agar ho).",
+        ],
+        "Gussa": [
+            "Likhna shuru karein — jo gussa hai woh kagaz pe nikaalo.",
+            "Aik break le kar paani piyein, 60 seconds pause.",
+            "Trigger identify karein: aaj kis baat ne sab se zyada gussa diya?",
+        ],
+        "Khush": [
+            "Is routine ko note kar lein: aaj kya cheez help kar rahi thi?",
+            "Apne aap ko credit dein — consistency maintain karein.",
+            "Aik choti celebration choose karein (simple reward).",
+        ],
+        "Neutral": [
+            "Roz ka aik chota goal set karein (10-15 minutes).",
+            "Neend ka time thora consistent rakhein.",
+            "Aaj ek supportive cheez karein: walk, chai, ya journaling.",
+        ],
+    }
+    tips = tips_map.get(dominant_em, tips_map["Neutral"])
+
+    # --- build charts ---
+    def mood_chart() -> Drawing:
+        w, h = 480, 180
+        d = Drawing(w, h)
+        d.add(Rect(0, 0, w, h, rx=10, ry=10, fillColor=HexColor("#F8FAFC"), strokeColor=HexColor("#E2E8F0")))
+
+        pad_l, pad_r, pad_b, pad_t = 44, 16, 32, 22
+        plot = LinePlot()
+        plot.x = pad_l
+        plot.y = pad_b
+        plot.width = w - pad_l - pad_r
+        plot.height = h - pad_b - pad_t
+
+        data = [(i, mood_vals[i]) for i in range(len(mood_vals))]
+        plot.data = [data]
+        plot.joinedLines = 1
+        plot.lines[0].strokeColor = teal
+        plot.lines[0].strokeWidth = 2
+
+        plot.yValueAxis.valueMin = 1
+        plot.yValueAxis.valueMax = 10
+        plot.yValueAxis.valueStep = 1
+        plot.yValueAxis.visibleGrid = 1
+        plot.yValueAxis.gridStrokeColor = HexColor("#E2E8F0")
+        plot.yValueAxis.gridStrokeWidth = 0.5
+        plot.yValueAxis.labels.fontName = FONT
+        plot.yValueAxis.labels.fontSize = 7
+
+        plot.xValueAxis.valueMin = 0
+        plot.xValueAxis.valueMax = max(1, len(mood_vals) - 1)
+        plot.xValueAxis.valueStep = 1
+        plot.xValueAxis.labels.fontName = FONT
+        plot.xValueAxis.labels.fontSize = 7
+        plot.xValueAxis.labels.angle = 0
+        plot.xValueAxis.labelTextFormat = lambda v: mood_points[int(v)][0] if int(v) < len(mood_points) else ""
+
+        d.add(plot)
+
+        lab = Label()
+        lab.setOrigin(12, h - 14)
+        lab.setText("Mood scores by session (1 to 10)")
+        lab.fontName = FONT_BOLD
+        lab.fontSize = 9
+        lab.fillColor = HexColor("#0f172a")
+        d.add(lab)
+        return d
+
+    def emotion_chart() -> Drawing:
+        w, h = 480, 170
+        d = Drawing(w, h)
+        d.add(Rect(0, 0, w, h, rx=10, ry=10, fillColor=HexColor("#F8FAFC"), strokeColor=HexColor("#E2E8F0")))
+
+        labels = list(mapped.keys())
+        values = [mapped[k] for k in labels]
+        pad_l, pad_r, pad_b, pad_t = 44, 16, 36, 22
+        bc = VerticalBarChart()
+        bc.x = pad_l
+        bc.y = pad_b
+        bc.width = w - pad_l - pad_r
+        bc.height = h - pad_b - pad_t
+        bc.data = [values]
+        bc.strokeColor = None
+        bc.bars[0].fillColor = teal
+        bc.valueAxis.valueMin = 0
+        bc.valueAxis.valueMax = max(1, max(values))
+        bc.valueAxis.valueStep = max(1, int(max(values) / 4) or 1)
+        bc.valueAxis.visibleGrid = 1
+        bc.valueAxis.gridStrokeColor = HexColor("#E2E8F0")
+        bc.valueAxis.gridStrokeWidth = 0.5
+        bc.valueAxis.labels.fontName = FONT
+        bc.valueAxis.labels.fontSize = 7
+        bc.categoryAxis.categoryNames = labels
+        bc.categoryAxis.labels.fontName = FONT
+        bc.categoryAxis.labels.fontSize = 7
+        bc.categoryAxis.labels.angle = 0
+        d.add(bc)
+
+        lab = Label()
+        lab.setOrigin(12, h - 14)
+        lab.setText("Emotion breakdown (frequency)")
+        lab.fontName = FONT_BOLD
+        lab.fontSize = 9
+        lab.fillColor = HexColor("#0f172a")
+        d.add(lab)
+        return d
+
+    full_w = A4[0] - (2 * MARGIN)
+
+    # --- story ---
     story: list[Any] = []
 
-    header = Table(
+    head_tbl = Table(
         [
-            [Paragraph(_xml_escape("🧠 Sukoon AI — Aapki Weekly Report"), cover_title)],
-            [Paragraph(_xml_escape("Aapki mental wellness journey ka ek jhalak"), cover_sub)],
+            [Paragraph(_xml_escape("Sukoon AI"), title_style)],
+            [Paragraph(_xml_escape("Weekly Mental Health Report"), sub_style)],
+            [Paragraph(_xml_escape(f"User: {user_name}"), sub_style)],
+            [Paragraph(_xml_escape(f"Date range: {date_range}"), sub_style)],
         ],
         colWidths=[full_w],
     )
-    header.setStyle(
+    head_tbl.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
-                ("TOPPADDING", (0, 0), (-1, -1), 16),
-                ("BOTTOMPADDING", (0, -1), (-1, -1), 18),
-                ("LEFTPADDING", (0, 0), (-1, -1), 12),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-            ]
-        )
-    )
-    story.append(header)
-    story.append(Spacer(1, 8))
-
-    week_lbl = insights.get("week_label") or "Is hafte"
-    story.append(Paragraph(_xml_escape(f"<i>Week of {week_lbl}</i>"), foot))
-    story.append(Spacer(1, 2))
-    story.append(HorizontalRule(full_w - 32, PRIMARY))
-    story.append(Spacer(1, 10))
-
-    mood_vals = insights.get("mood_values") or []
-    avg = round(sum(mood_vals) / len(mood_vals), 1) if mood_vals else 0.0
-    trend_txt = insights.get("trend_arrow_label") or compute_trend_label(mood_vals)
-
-    story.append(Paragraph(_xml_escape("📊 Aapka Mood Journey"), h2))
-    story.append(
-        Paragraph(
-            _xml_escape(
-                f"<b>Average mood score:</b> {avg:.1f} / 10 &nbsp;&nbsp; <b>Trend arrow:</b> {trend_txt}"
-            ),
-            body,
-        )
-    )
-    story.append(Spacer(1, 4))
-
-    vals_draw = mood_vals if len(mood_vals) >= 2 else ([mood_vals[0]] if mood_vals else [5.0])
-    story.append(DrawingPDF(mood_line_chart(vals_draw)))
-
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(_xml_escape("💭 Aapke Jazbaat Is Hafte"), h2))
-
-    ef = insights.get("emotion_freq") or {"okay": 2}
-    story.append(DrawingPDF(emotion_bar_chart(ef)))
-
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(_xml_escape("🤖 Sukoon AI ki Raay"), h2))
-    warm = insights.get("warm_analysis") or ""
-    story.append(Paragraph(_xml_escape(warm), body))
-
-    stressors = insights.get("stressors") or []
-    if stressors:
-        story.append(Spacer(1, 6))
-        tag_html = " &bull; ".join(_xml_escape(s) for s in stressors)
-        story.append(Paragraph(_xml_escape("<b>Key themes / stressors:</b> ") + tag_html, body))
-
-    story.append(Spacer(1, 10))
-    story.append(Paragraph(_xml_escape("✨ Aapki Khubiyaan"), h2))
-    for line in insights.get("positive_observations") or []:
-        story.append(Paragraph(_xml_escape(f"✅ {line}"), body))
-        story.append(Spacer(1, 3))
-
-    story.append(Spacer(1, 8))
-    story.append(Paragraph(_xml_escape("💡 Aglay Hafte Ke Liye"), h2))
-    icons = ["🌿", "💧", "☀️", "📓", "🤝"]
-    for i, line in enumerate(insights.get("recommendations") or []):
-        ic = icons[i % len(icons)]
-        story.append(Paragraph(_xml_escape(f"{ic} {line}"), body))
-        story.append(Spacer(1, 3))
-
-    story.append(Spacer(1, 10))
-    mot = insights.get("motivational_message") or "Tum deserving ho araam aur sukoon ke 🤍"
-    qt = ParagraphStyle(
-        "qti",
-        parent=quote,
-        fontName=FONT,
-        italic=True,
-    )
-
-    mq = Table(
-        [[Paragraph(_xml_escape(mot.replace("\n", " ")), qt)]],
-        colWidths=[full_w],
-    )
-    mq.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), PRIMARY),
-                ("TOPPADDING", (0, 0), (-1, -1), 14),
-                ("BOTTOMPADDING", (0, -1), (-1, -1), 14),
+                ("BACKGROUND", (0, 0), (-1, -1), header_bg),
                 ("LEFTPADDING", (0, 0), (-1, -1), 14),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 14),
+                ("BOTTOMPADDING", (0, -1), (-1, -1), 14),
             ]
         )
     )
-    story.append(mq)
+    story.append(head_tbl)
+    story.append(Spacer(1, 14))
 
-    story.append(Spacer(1, 16))
-    story.append(
-        Paragraph(_xml_escape("Sukoon AI — Pakistan ka pehla Roman Urdu Mental Health Assistant"), foot)
-    )
-    story.append(Paragraph(_xml_escape("Yeh report sirf aapke liye hai 🤍"), foot))
-    story.append(Paragraph(_xml_escape("Mushkil waqt mein: Umang 0317-4288665"), foot))
+    story.append(Paragraph(_xml_escape("Mood Graph"), h2))
+    story.append(DrawingPDF(mood_chart()))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph(_xml_escape("Emotion Breakdown"), h2))
+    story.append(DrawingPDF(emotion_chart()))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph(_xml_escape("Weekly Summary"), h2))
+    summary_lines = [
+        f"Is hafte aapka overall mood: {avg_mood:.1f}/10",
+        f"Sabse mushkil din: {mood_points[worst_i][0]}",
+        f"Sabse behtar din: {mood_points[best_i][0]}",
+        f"Total sessions: {total_sessions}",
+        f"Dominant emotion: {dominant_em}",
+    ]
+    for ln in summary_lines:
+        story.append(Paragraph(_xml_escape(ln), body))
+        story.append(Spacer(1, 2))
+
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(_xml_escape("Personalized Tips"), h2))
+    for t in tips[:3]:
+        story.append(Paragraph(_xml_escape(f"- {t}"), body))
+        story.append(Spacer(1, 2))
+
+    story.append(Spacer(1, 14))
+    story.append(Paragraph(_xml_escape("Crisis support: Umang 0317-4288665"), small))
 
     pdf.build(story)
     return buf.getvalue()

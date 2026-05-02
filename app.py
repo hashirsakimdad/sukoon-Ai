@@ -153,7 +153,7 @@ def _is_quota_or_rate_limit(err: BaseException) -> bool:
 
 
 RATE_LIMIT_CHAT: dict[str, Any] = {
-    "response": "Thori dair baad try karo — AI thoda busy hai abhi 🤍",
+    "response": "Thori dair baad try karo — AI thoda busy hai abhi.",
     "suggested_exercise": "none",
     "memory_insight": None,
 }
@@ -208,7 +208,7 @@ def _build_gemini_history(history: Any) -> list[dict[str, Any]]:
 
 def _default_model_greeting() -> str:
     return (
-        "Assalam o Alaikum! 🤍 Main Sukoon AI hun — tumhara digital dost. "
+        "Assalam o Alaikum! Main Sukoon AI hun — tumhara digital dost. "
         "Aaj kaisa feel ho raha hai? Bata sakte ho mujhe."
     )
 
@@ -518,7 +518,7 @@ class MentalHealthAgent:
 
         if not reply:
             reply = (
-                "Mujhay abhi jawab bnane mei masla aa raha hai. Dobara zaroor likho — mai sun rahi hun 🤍 "
+                "Mujhay abhi jawab bnane mei masla aa raha hai. Dobara zaroor likho — mai sun rahi hun. "
                 "Agar emergency lagay to Umang: 0317-4288665."
             )
 
@@ -793,7 +793,7 @@ def chat_route():
         msg = _safe_str(message)
         if not msg:
             return jsonify(
-                _friendly_error_payload("Pehlay koi pegham likho 🤍.")
+                _friendly_error_payload("Pehlay koi pegham likho.")
             ), 400
 
         doc = load_session_doc(sid)
@@ -865,7 +865,7 @@ def chat_route():
 
         ai_entry = {
             "role": "model",
-            "content": ai_text or "Hmm, abhi kuch clear nahi 🤍 Dobara zaroor likhna.",
+            "content": ai_text or "Hmm, abhi kuch clear nahi. Dobara zaroor likhna.",
             "timestamp": ai_ts,
         }
         doc["messages"].append(ai_entry)
@@ -892,7 +892,7 @@ def chat_route():
         traceback.print_exc()
         return jsonify(
             _friendly_error_payload(
-                "Yaar internet check karo — server pe kuch masla aa gaya hai, dobara try karo 🤍."
+                "Yaar internet check karo — server pe kuch masla aa gaya hai, dobara try karo."
             )
         ), 500
 
@@ -907,7 +907,7 @@ def clear_history_route():
 
         blank = _new_session(sid)
         greet = (
-            "Sab saf ho gaya. Phir se shuru kartay hain — main yahan hun 🤍 "
+            "Sab saf ho gaya. Phir se shuru kartay hain — main yahan hun. "
             "Aaj subah se sab se zyada kya chub raha hai?"
         )
         blank["messages"].append(
@@ -933,7 +933,7 @@ def clear_all_sessions_route():
         session["session_id"] = new_sid
         doc = _new_session(new_sid)
         greet = (
-            "Naya safe space shuru — main Sukoon AI hoon 🤍 "
+            "Naya safe space shuru — main Sukoon AI hoon. "
             "Jo bhi dil pe hai, araam se likho; hum saath hain."
         )
         doc["messages"].append({"role": "model", "content": greet, "timestamp": _utc_now_iso()})
@@ -960,7 +960,7 @@ def generate_weekly_report_route():
         doc = load_session_doc(sid)
         if not session_report_eligible(doc):
             return jsonify(
-                _friendly_error_payload("Pehle thodi baat karo, phir report banegi! 😊"),
+                _friendly_error_payload("Pehle thodi baat karo, phir report banegi!"),
             ), 400
 
         hist_blob = serialize_session_for_report(doc)
