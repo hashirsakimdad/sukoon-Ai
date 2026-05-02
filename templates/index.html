@@ -2,155 +2,171 @@
 <html lang="ur">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sukoon AI — Apna haal batao 🤍</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Sukoon AI</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body class="theme-dark">
-    <aside id="historySidebar" class="history-sidebar" aria-hidden="true">
-      <div class="sidebar-header">
-        <h2>Pichli baatein</h2>
-        <button type="button" class="icon-btn" id="sidebarClose" aria-label="Close sidebar">✕</button>
-      </div>
-      <div id="sessionsList" class="sessions-list"></div>
-      <button type="button" class="danger-btn full" id="clearAllSessionsBtn">Sab saf karo</button>
-    </aside>
-    <div id="sidebarBackdrop" class="sidebar-backdrop hidden" aria-hidden="true"></div>
+    <div id="navBackdrop" class="nav-backdrop" aria-hidden="true"></div>
 
-    <header class="site-header">
-      <div class="header-inner">
-        <div class="brand">
-          <span class="brand-logo" aria-hidden="true">🧠</span>
-          <div>
-            <div class="brand-title">Sukoon AI</div>
-            <p class="brand-tagline">Apna haal batao — hum sunenge 🤍</p>
+    <!-- Left sidebar — mood, emotion, chips -->
+    <aside id="leftSidebar" class="left-sidebar" aria-label="Sidebar">
+      <div class="left-sidebar-scroll">
+        <div class="brand-block fade-in-item">
+          <div class="logo-gradient" aria-hidden="true">🧠</div>
+          <h1 class="logo-title">Sukoon AI</h1>
+          <p class="tagline">Apna haal batao</p>
+        </div>
+        <div class="divider"></div>
+
+        <section class="side-block">
+          <p class="side-label">Aaj ka mood</p>
+          <div class="mood-hero">
+            <span id="moodEmoji" class="mood-emoji-xl" aria-hidden="true">🙂</span>
+            <div class="mood-score-line">
+              <span id="moodValue" class="mood-num">6</span><span class="mood-den">/10</span>
+            </div>
           </div>
-        </div>
-        <div class="header-actions">
-          <button type="button" class="ghost-btn sidebar-toggle-main" id="openSidebarBtn">📋 Pichli Baatein</button>
-          <button type="button" class="icon-btn" id="themeToggle" aria-label="Dark light toggle">🌙</button>
-          <button type="button" class="icon-btn danger-outline" id="clearHistoryBtn" aria-label="Clear history">🗑️</button>
-        </div>
-      </div>
-    </header>
+          <input
+            id="moodSlider"
+            class="mood-slider-premium"
+            type="range"
+            min="1"
+            max="10"
+            step="1"
+            value="6"
+            aria-label="Mood one to ten"
+          />
+          <canvas id="moodChart" class="mood-sparkline" width="200" height="50" aria-label="Mood sparkline"></canvas>
+        </section>
 
-    <main class="main-wrap">
-      <div id="memoryBar" class="memory-bar hidden">
-        <span class="memory-bar-label">Yaad:</span>
-        <span id="memoryInsightText" class="memory-bar-text"></span>
-      </div>
+        <div class="divider"></div>
 
-      <section class="card mood-card">
-        <h2 class="section-title">Aaj mood kaisa hai?</h2>
-        <div class="mood-row">
-          <span id="moodEmoji" class="mood-emoji" aria-hidden="true">🙂</span>
-          <span class="mood-value-wrap"
-            ><span id="moodValue">6</span><span class="mood-slash">/10</span></span
-          >
-        </div>
-        <input
-          id="moodSlider"
-          type="range"
-          min="1"
-          max="10"
-          step="1"
-          value="6"
-          class="mood-slider"
-          aria-label="Mood one to ten"
-        />
-        <canvas
-          id="moodChart"
-          class="mood-canvas"
-          width="300"
-          height="80"
-          aria-label="Mood chart last ten"
-        ></canvas>
-      </section>
+        <section class="side-block">
+          <p class="side-label">Mehsoos ho raha hai:</p>
+          <div id="emotionBadge" class="emotion-badge-premium" style="--emotion-glow: #14b8a6">
+            <span id="emotionEmoji" class="emotion-emoji-lg" aria-hidden="true">😐</span>
+            <span id="emotionUrdu" class="emotion-urdu">ٹھیک</span>
+          </div>
+        </section>
 
-      <section class="emotion-strip">
-        <div id="emotionBadge" class="emotion-badge" style="--emotion: #34d399">
-          <span>Mahsoos ho raha hai:</span>
-          <strong id="emotionUrdu">ٹھیک</strong>
-          <span id="emotionEmoji" class="emotion-ico" aria-hidden="true">😐</span>
-        </div>
-      </section>
+        <div class="divider"></div>
 
-      <section id="chat" class="chat-area" aria-live="polite" aria-label="Chat messages"></section>
-
-      <div id="typingIndicator" class="typing-indicator hidden" aria-live="polite">
-        <span class="typing-dot"></span>
-        <span class="typing-dot"></span>
-        <span class="typing-dot"></span>
-      </div>
-
-      <section id="exerciseBreathing" class="card exercise-card hidden" data-ex="breathing">
-        <div class="ex-head">
-          <h3>Saans wala mashq</h3>
-          <button type="button" class="text-btn" id="hideBreathingBtn">Band karo</button>
-        </div>
-        <div class="breathing-stage">
-          <div id="breathCircle" class="breath-circle"></div>
-          <p id="breathPhaseText" class="breath-phase">Taiyar?</p>
-        </div>
-        <button type="button" class="primary-btn" id="breathToggleBtn">Shuru karo</button>
-      </section>
-
-      <section id="exerciseGrounding" class="card exercise-card hidden" data-ex="grounding">
-        <div class="ex-head">
-          <h3>5-4-3-2-1 Grounding</h3>
-          <button type="button" class="text-btn" id="hideGroundingBtn">Band karo</button>
-        </div>
-        <div id="groundingList" class="grounding-list"></div>
-        <p id="groundingDone" class="grounding-done hidden">Shahbash! Tum bilkul theek ho 🌟</p>
-      </section>
-
-      <section class="card chips-card">
-        <div class="chips" id="quickChips">
-          <button type="button" class="chip" data-prompt="Aj anxiety feel ho rahi hai, dil tez dhadak raha hai.">
+        <section class="side-block chip-stack" id="quickChips">
+          <button type="button" class="chip-v" data-prompt="Aj anxiety feel ho rahi hai, dil tez dhadak raha hai.">
             😰 Anxiety hai
           </button>
-          <button type="button" class="chip" data-prompt="Bahut udaas hun, kuch samajh nahi aa raha.">😢 Udaas hun</button>
-          <button type="button" class="chip" data-prompt="Ghar mei tension hai, log kya kahenge wala pressure hai.">
+          <button type="button" class="chip-v" data-prompt="Bahut udaas hun, kuch samajh nahi aa raha.">😢 Udaas hun</button>
+          <button type="button" class="chip-v" data-prompt="Ghar mei tension hai, log kya kahenge wala pressure hai.">
             😤 Ghar tension
           </button>
-          <button type="button" class="chip" data-prompt="Exams ka buhat pressure hai, neend kharab hai.">
+          <button type="button" class="chip-v" data-prompt="Exams ka buhat pressure hai, neend kharab hai.">
             📚 Exam pressure
           </button>
-          <button type="button" class="chip" data-prompt="Neend nahi aa rahi, dimagh chalta rehta hai.">😴 Neend nahi</button>
-          <button type="button" class="chip" data-prompt="Apnapan nahi mehsoos ho raha, akela lag raha hun.">
+          <button type="button" class="chip-v" data-prompt="Neend nahi aa rahi, dimagh chalta rehta hai.">
+            😴 Neend nahi
+          </button>
+          <button type="button" class="chip-v" data-prompt="Apnapan nahi mehsoos ho raha, akela lag raha hun.">
             😞 Akela hun
           </button>
-        </div>
-      </section>
+        </section>
+      </div>
+      <a class="umang-sidebar-btn" href="tel:03174288665">🆘 Umang — 0317-4288665</a>
+    </aside>
 
-      <section class="card input-card">
-        <label class="sr-only" for="messageInput">Message</label>
-        <div class="input-row">
-          <textarea
-            id="messageInput"
-            class="msg-textarea"
-            rows="2"
-            placeholder="Dil ki baat likho... (Enter bhejo, Shift+Enter nayi line)"
-          ></textarea>
-          <div class="input-actions">
-            <button type="button" id="micBtn" class="mic-btn" aria-label="Voice input">🎤</button>
-            <button type="button" id="sendBtn" class="send-btn" aria-label="Send">➤</button>
+    <!-- Main column -->
+    <div class="app-main">
+      <header class="top-bar">
+        <button type="button" id="navOpenBtn" class="icon-circle hamburger-only" aria-label="Open menu">☰</button>
+        <h2 class="top-bar-title">Sukoon AI</h2>
+        <div class="top-bar-actions">
+          <button type="button" id="voiceMuteBtn" class="icon-circle" aria-pressed="false" aria-label="Mute AI voice">🔊</button>
+          <button type="button" id="themeToggle" class="icon-circle" aria-label="Toggle theme">🌙</button>
+          <button type="button" id="openSidebarBtn" class="icon-circle" aria-label="Past sessions">📋</button>
+          <button type="button" id="clearHistoryBtn" class="icon-circle icon-danger-soft" aria-label="Clear chat">🗑️</button>
+        </div>
+      </header>
+
+      <div id="memoryBar" class="memory-strip hidden" aria-live="polite">
+        <span class="memory-ico">💭</span>
+        <span id="memoryInsightText" class="memory-text"></span>
+      </div>
+
+      <div class="chat-flex">
+        <div id="chatScroll" class="chat-scroll">
+          <section id="chat" class="msg-list" aria-live="polite"></section>
+
+          <div id="typingIndicator" class="typing-plate hidden" aria-live="polite">
+            <div class="typing-plate-inner">
+              <span class="avatar-teal-xs" aria-hidden="true">🧠</span>
+              <div class="typing-dots" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>
+              <span class="typing-label">Soch raha hun...</span>
+            </div>
+          </div>
+
+          <article id="exerciseBreathing" class="ex-card ex-breathing hidden">
+            <div class="ex-card-head">
+              <h3 class="ex-title">Saans ka mashq</h3>
+              <button type="button" class="text-link" id="hideBreathingBtn">Band</button>
+            </div>
+            <div class="breath-row">
+              <div id="breathCircle" class="breath-dot" aria-hidden="true"></div>
+              <div class="breath-meta">
+                <p id="breathPhaseText" class="breath-phase">Taiyar?</p>
+                <p id="breathTimer" class="breath-timer">—</p>
+              </div>
+            </div>
+            <button type="button" class="btn-primary-wide" id="breathToggleBtn">Shuru karo</button>
+          </article>
+
+          <article id="exerciseGrounding" class="ex-card ex-grounding hidden">
+            <div class="ex-card-head">
+              <h3 class="ex-title">🌿 Grounding — 5-4-3-2-1</h3>
+              <button type="button" class="text-link" id="hideGroundingBtn">Band</button>
+            </div>
+            <div class="grounding-progress-track" aria-hidden="true">
+              <div id="groundingProgressFill" class="grounding-progress-fill" style="width: 0%"></div>
+            </div>
+            <div id="groundingList" class="grounding-checks"></div>
+            <p id="groundingDone" class="grounding-celebrate hidden">Shahbash! Tum bilkul theek ho 🌟</p>
+          </article>
+        </div>
+
+        <div class="composer">
+          <p id="micStatus" class="voice-status" aria-live="polite"></p>
+          <div class="composer-row">
+            <button type="button" id="micBtn" class="btn-mic" aria-label="Voice input">🎤</button>
+            <label class="sr-only" for="messageInput">Message</label>
+            <textarea
+              id="messageInput"
+              class="composer-textarea"
+              rows="1"
+              placeholder="Apna haal batao... (Roman Urdu ya English mein)"
+            ></textarea>
+            <button type="button" id="sendBtn" class="btn-send" disabled aria-label="Send message">→</button>
           </div>
         </div>
-        <p id="micStatus" class="mic-status" aria-live="polite"></p>
-      </section>
-    </main>
+      </div>
+    </div>
 
-    <footer class="crisis-footer">
-      <span>🆘 Umang Helpline:</span>
-      <a href="tel:03174288665">0317-4288665</a>
-    </footer>
+    <!-- History — right overlay -->
+    <div id="historyBackdrop" class="history-backdrop" aria-hidden="true"></div>
+    <aside id="historySidebar" class="history-panel" aria-hidden="true">
+      <div class="history-head">
+        <h2 class="history-title">📋 Pichli Baatein</h2>
+        <button type="button" id="sidebarClose" class="icon-circle" aria-label="Close">✕</button>
+      </div>
+      <div id="sessionsList" class="history-list"></div>
+      <button type="button" class="btn-danger-wide" id="clearAllSessionsBtn">Sab saf karo</button>
+    </aside>
 
     <script id="sukoon-bootstrap" type="application/json">
 {{ {

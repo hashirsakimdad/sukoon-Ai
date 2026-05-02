@@ -16,22 +16,40 @@ from flask_cors import CORS
 import google.generativeai as genai
 from google.api_core import exceptions as gexc
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    print("WARNING: GEMINI_API_KEY is missing. Set it in .env or environment variables.")
+def _load_gemini_api_key() -> str:
+    """Prefer GEMINI_API_KEY; strip whitespace; optional GOOGLE_API_KEY fallback."""
+    key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+    return key
 
-genai.configure(api_key=GEMINI_API_KEY)
+
+GEMINI_API_KEY = _load_gemini_api_key()
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY is missing. Set it in .env or Cloud Run environment variables.")
+else:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 DATA_DIR = Path("data")
 SESSIONS_DIR = DATA_DIR / "sessions"
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 PRIMARY_MODEL = "gemini-1.5-flash"
-FALLBACK_MODELS = [
+QUOTA_FALLBACK_MODEL = "gemini-1.5-flash-8b"
+
+# Order: try 1.5 Flash first; on 429 / quota / ResourceExhausted, later entries (8B) are tried.
+# Then other Flash IDs for 404 / missing model.
+COMPLETION_MODELS: list[str] = [
+    "gemini-1.5-flash",
+    "models/gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "models/gemini-1.5-flash-8b",
     "models/gemini-2.0-flash",
     "models/gemini-flash-latest",
     "models/gemini-2.5-flash",
 ]
+
+
+class GeminiQuotaExhaustedError(Exception):
+    """Raised when every tried model hits quota/rate-limit (429 / ResourceExhausted)."""
 
 URDU_LABELS = {
     "anxiety": "پریشانی",
@@ -87,8 +105,38 @@ def _friendly_error_payload(message: str) -> dict[str, Any]:
     return {"ok": False, "error": message}
 
 
-def _iter_models() -> list[str]:
-    return [PRIMARY_MODEL] + FALLBACK_MODELS
+def _build_quota_exception_types() -> tuple[type, ...]:
+    types_list: list[type] = [gexc.ResourceExhausted]
+    tm = getattr(gexc, "TooManyRequests", None)
+    if tm is not None:
+        types_list.append(tm)
+    return tuple(types_list)
+
+
+QUOTA_EXCEPTION_TYPES: tuple[type, ...] = _build_quota_exception_types()
+
+
+def _is_quota_or_rate_limit(err: BaseException) -> bool:
+    if isinstance(err, QUOTA_EXCEPTION_TYPES):
+        return True
+    code = getattr(err, "code", None)
+    if code == 429:
+        return True
+    msg = str(err).lower()
+    if "resource exhausted" in msg:
+        return True
+    if "429" in msg and ("quota" in msg or "rate" in msg or "limit" in msg):
+        return True
+    if "quota" in msg and ("exceed" in msg or "exhausted" in msg):
+        return True
+    return False
+
+
+RATE_LIMIT_CHAT: dict[str, Any] = {
+    "response": "Thori dair baad try karo — AI thoda busy hai abhi 🤍",
+    "suggested_exercise": "none",
+    "memory_insight": None,
+}
 
 
 def _strip_code_fences(text: str) -> str:
@@ -145,6 +193,7 @@ def _new_session(session_id: str) -> dict[str, Any]:
         "messages": [],
         "mood_history": [],
         "memory_insights": [],
+        "last_emotion": "okay",
     }
 
 
@@ -171,6 +220,7 @@ def load_session_doc(session_id: str) -> dict[str, Any]:
     data.setdefault("messages", [])
     data.setdefault("mood_history", [])
     data.setdefault("memory_insights", [])
+    data.setdefault("last_emotion", "okay")
     if not isinstance(data["messages"], list):
         data["messages"] = []
     if not isinstance(data["mood_history"], list):
@@ -203,11 +253,23 @@ def list_recent_sessions(limit: int = 5) -> list[dict[str, Any]]:
         try:
             with open(p, encoding="utf-8") as f:
                 d = json.load(f)
+            msgs = d.get("messages") or []
+            preview = ""
+            if isinstance(msgs, list):
+                for m in msgs:
+                    if isinstance(m, dict) and _safe_str(m.get("role")).lower() == "user":
+                        preview = _safe_str(m.get("content"), max_len=100)
+                        break
+            lem = _safe_str(d.get("last_emotion"), max_len=16).lower()
+            if lem not in ALLOWED_EMOTIONS:
+                lem = "okay"
             out.append(
                 {
                     "session_id": _safe_str(d.get("session_id")) or p.stem,
                     "created_at": _safe_str(d.get("created_at")),
-                    "message_count": len(d.get("messages") or []),
+                    "message_count": len(msgs) if isinstance(msgs, list) else 0,
+                    "preview": preview,
+                    "last_emotion": lem,
                 }
             )
         except Exception:
@@ -218,12 +280,13 @@ def list_recent_sessions(limit: int = 5) -> list[dict[str, Any]]:
 class MentalHealthAgent:
     def __init__(self) -> None:
         self.model = PRIMARY_MODEL
+        self.quota_fallback_model = QUOTA_FALLBACK_MODEL
         self.system_prompt = SYSTEM_PROMPT
 
     def _generate_text(self, prompt: str, system: str | None = None) -> str:
         last_err: Exception | None = None
-        result_text = ""
-        for name in _iter_models():
+        saw_quota = False
+        for name in COMPLETION_MODELS:
             try:
                 kwargs: dict[str, Any] = {"model_name": name}
                 if system:
@@ -236,17 +299,17 @@ class MentalHealthAgent:
             except gexc.NotFound as e:
                 last_err = e
                 continue
-            except gexc.ResourceExhausted as e:
-                print(e)
-                traceback.print_exc()
-                raise
             except Exception as e:
-                last_err = e
-                msg = str(e).lower()
-                if "quota" in msg or "exceeded" in msg:
-                    print(e)
+                if _is_quota_or_rate_limit(e):
+                    saw_quota = True
+                    last_err = e
+                    print(f"Gemini quota/rate-limit on {name!r}, trying next model:", e)
                     traceback.print_exc()
+                    continue
+                last_err = e
                 raise
+        if saw_quota:
+            raise GeminiQuotaExhaustedError(str(last_err) if last_err else "quota exhausted")
         if last_err:
             raise last_err
         return ""
@@ -269,6 +332,13 @@ class MentalHealthAgent:
 
         try:
             label_raw = self._generate_text(prompt)
+        except GeminiQuotaExhaustedError as e:
+            print("analyze_emotion quota exhausted:", e)
+            return {
+                "emotion": "okay",
+                "color": EMOTION_COLORS["okay"],
+                "urdu_label": URDU_LABELS["okay"],
+            }
         except Exception as e:
             print("analyze_emotion:", e)
             traceback.print_exc()
@@ -305,6 +375,8 @@ class MentalHealthAgent:
             t = self._generate_text(prompt, system="You write brief Roman Urdu memory cues for therapists.")
             t = _safe_str(t, max_len=280)
             return t or ""
+        except GeminiQuotaExhaustedError:
+            return ""
         except Exception as e:
             print("generate_memory_insight:", e)
             traceback.print_exc()
@@ -356,7 +428,8 @@ class MentalHealthAgent:
         gh = _build_gemini_history(history)
 
         raw = ""
-        for name in _iter_models():
+        last_quota = False
+        for name in COMPLETION_MODELS:
             try:
                 model = genai.GenerativeModel(
                     model_name=name,
@@ -370,9 +443,16 @@ class MentalHealthAgent:
             except gexc.NotFound:
                 continue
             except Exception as e:
+                if _is_quota_or_rate_limit(e):
+                    last_quota = True
+                    print(f"Chat quota/rate-limit on {name!r}, trying next model:", e)
+                    traceback.print_exc()
+                    continue
                 print("chat model error:", e)
                 traceback.print_exc()
                 raise
+        if not raw and last_quota:
+            return dict(RATE_LIMIT_CHAT)
 
         suggested = "none"
         reply = ""
@@ -419,7 +499,8 @@ class MentalHealthAgent:
 agent = MentalHealthAgent()
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+_secret = os.environ.get("FLASK_SECRET_KEY")
+app.secret_key = _secret.encode("utf-8") if _secret else os.urandom(24)
 CORS(app)
 
 
@@ -431,8 +512,8 @@ def index():
         doc = load_session_doc(sid)
         if not doc["messages"]:
             greet = (
-                "Assalam o alaikum — main Sukoon AI hoon. Yahan judgement nahi, sirf ek safe space 🤍 "
-                "Aaj dil pe kya bojh hai? Batao, hum sun rhe hain."
+                "Assalam o Alaikum! 🤍 Main Sukoon AI hun — tumhara digital dost. "
+                "Aaj kaisa feel ho raha hai? Bata sakte ho mujhe."
             )
             doc["messages"].append(
                 {"role": "model", "content": greet, "timestamp": _utc_now_iso()},
@@ -521,14 +602,6 @@ def analyze_emotion_route():
         msg = data.get("message", "")
         out = agent.analyze_emotion(msg)
         return jsonify(out)
-    except gexc.ResourceExhausted:
-        return jsonify(
-            {
-                "emotion": "okay",
-                "color": EMOTION_COLORS["okay"],
-                "urdu_label": URDU_LABELS["okay"],
-            }
-        )
     except Exception as e:
         print("/analyze-emotion:", e)
         traceback.print_exc()
@@ -591,16 +664,9 @@ def chat_route():
             ai_result = agent.chat(msg, mood_val, history_for_ai, emotion)
             ai_ts = _utc_now_iso()
             ai_text = ai_result["response"]
-        except gexc.ResourceExhausted:
+        except GeminiQuotaExhaustedError:
             ai_ts = _utc_now_iso()
-            ai_result = {
-                "response": (
-                    "Yaar AI ki quota / limit ki wajah se abhi jawab nahi aa sakta. "
-                    "Thori dair baad dubara try karo 🤍 Agar zaroorat ho Umang helpline 0317-4288665."
-                ),
-                "suggested_exercise": "breathing",
-                "memory_insight": None,
-            }
+            ai_result = dict(RATE_LIMIT_CHAT)
             ai_text = ai_result["response"]
 
         ai_entry = {
@@ -618,6 +684,10 @@ def chat_route():
             if generated:
                 mem_insights.append(generated)
                 returned_insight = generated
+
+        emo_saved = _safe_str(emotion, max_len=24).lower()
+        if emo_saved in ALLOWED_EMOTIONS:
+            doc["last_emotion"] = emo_saved
 
         save_session_doc(doc)
 
