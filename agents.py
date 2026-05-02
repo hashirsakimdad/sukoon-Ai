@@ -214,7 +214,6 @@ def therapy_fallback_bundle(message: str, emotion_data: dict[str, Any]) -> dict[
     else:
         hint = _micro_hint_line(ml)
         reply = (
-            f"Achha, tumne bola: \"{u}\".\n"
             f"{hint}\n\n{tail_q}"
         )
 
@@ -631,15 +630,19 @@ class TherapyAgent:
         mem = safe_str(memory_context, max_len=2200).replace('"', "'")
         mood_disp = mood if isinstance(mood, int) else "unknown"
 
-        # PLAIN Roman Urdu prompt (no examples/templates, no JSON).
+        # Use EXACT prompt requested by user (nothing else).
         prompt = (
             "Tu Sukoon AI hai. Ek samajhdar Pakistani dost ki tarah baat kar.\n"
-            "Sirf Roman Urdu mein jawab de.\n"
-            "2-3 lines mein jawab do — chhota aur direct.\n"
-            "User jo keh raha hai bilkul usi ke baare mein baat kar.\n"
-            "Har baar naturally alag jawab do kyunki situation alag hai.\n"
-            "End mein sirf ek specific sawal poocho us ki situation se.\n"
-            "Koi fixed format nahi. Koi template nahi. Koi repeated phrases nahi.\n\n"
+            "Rules:\n"
+            "- Sirf Roman Urdu mein jawab de\n"
+            "- KABHI bhi user ka message repeat mat karo response mein\n"
+            "- KABHI mat likho \"Achha tumne bola\" ya \"Tumhari wording\"\n"
+            "- KABHI mat likho \"yehi jagah pakad ke chalenge\"\n"
+            "- KABHI mat likho \"Quick win:\"\n"
+            "- 2-3 lines mein jawab do, chhota aur direct\n"
+            "- User ki exact situation se related baat karo\n"
+            "- End mein sirf ek sawal poocho\n"
+            "- Koi template nahi, koi fixed format nahi\n\n"
             f"User: {user_msg}\n"
             f"Memory: {mem}\n"
             f"Emotion: {safe_str(emotion_data.get('primary_emotion', 'okay'), max_len=24)}\n"
