@@ -6,6 +6,7 @@ Each agent calls Gemini separately (gemini-1.5-flash). Failures are contained wi
 from __future__ import annotations
 
 import json
+import re
 import traceback
 from pathlib import Path
 from typing import Any
@@ -123,14 +124,43 @@ def _quotaish(err: BaseException) -> bool:
     return False
 
 
-def gemini_plain_text(prompt: str, *, system_instruction: str | None = None) -> str:
+def _generation_config(**kwargs: Any):
+    gc_mod = getattr(genai, "types", None)
+    if gc_mod is None:
+        return None
+    ctor = getattr(gc_mod, "GenerationConfig", None)
+    if ctor is None:
+        return None
+    args = {k: v for k, v in kwargs.items() if v is not None}
+    if not args:
+        return None
+    try:
+        return ctor(**args)
+    except Exception:
+        return None
+
+
+def gemini_plain_text(
+    prompt: str,
+    *,
+    system_instruction: str | None = None,
+    temperature: float | None = None,
+    max_output_tokens: int | None = None,
+) -> str:
+    gen_cfg = _generation_config(
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+    )
     for model_name in (AGENT_PRIMARY_MODEL, AGENT_MODEL_FALLBACK):
         try:
-            kwargs: dict[str, Any] = {"model_name": model_name}
+            kwargs_model: dict[str, Any] = {"model_name": model_name}
             if system_instruction:
-                kwargs["system_instruction"] = system_instruction
-            model = genai.GenerativeModel(**kwargs)
-            res = model.generate_content(prompt)
+                kwargs_model["system_instruction"] = system_instruction
+            model = genai.GenerativeModel(**kwargs_model)
+            if gen_cfg is not None:
+                res = model.generate_content(prompt, generation_config=gen_cfg)
+            else:
+                res = model.generate_content(prompt)
             return safe_str(getattr(res, "text", ""))
         except gexc.NotFound:
             continue
@@ -143,6 +173,66 @@ def gemini_plain_text(prompt: str, *, system_instruction: str | None = None) -> 
             traceback.print_exc()
             return ""
     return ""
+
+
+def _micro_hint_line(ml: str) -> str:
+    if "exam" in ml or "paper" in ml or "test" in ml:
+        return "Quick win: aik subject ka 25-minute chunk + 5-minute stretch gap try karlo."
+    if "neend" in ml or "sleep" in ml or "sone" in ml:
+        return "Quick win: screen 35 min pehle off + ek hi wake time ik din rakho."
+    if "ghar" in ml or "family" in ml or "ma" in ml or "baap" in ml:
+        return "Quick win: aik short boundary sentence calmly bolne ki rehearsal."
+    if "anxiety" in ml or "ghabra" in ml or "panic" in ml:
+        return "Quick win: 4-count inhale / 6-count exhale sirf paanch rounds."
+    return "Quick win: aik sentence likho jo abhi realistically control kar sakte ho."
+
+
+def therapy_fallback_bundle(message: str, emotion_data: dict[str, Any]) -> dict[str, Any]:
+    u = safe_str(message, max_len=280).strip().replace('"', "'").replace("\n", " ")
+    ml = u.lower()
+    pe = safe_str(str(emotion_data.get("primary_emotion", "okay"))).lower()
+
+    if "exam" in ml or "paper" in ml or "test" in ml:
+        tail_q = "Sub se heavy pressure kis subject/paper se lag rahi hai kal tak?"
+    elif "neend" in ml or "sleep" in ml or "sone" in ml:
+        tail_q = "Neend toot rahi jagte rehnay se hai ya jag kar so nahi sakte?"
+    elif "ghar" in ml or "family" in ml:
+        tail_q = "Ghar walon ki kis expectation/baat ne aaj sab se zyada chauband kiya?"
+    elif "akela" in ml or "lonely" in ml or "tanha" in ml:
+        tail_q = "Akela zyada raat aa raha ya din ka koi waqt spike karta?"
+    elif "anxiety" in ml or "ghabra" in ml or "panic" in ml or pe == "anxiety":
+        tail_q = "Triggers zyada body mein (dhadkan/tight chest) dikhte ya dimagh mein loop?"
+    else:
+        tail_q = "Is feeling ka sab se recent moment kaunsa tha jo ab tak yaad hai?"
+
+    hint = _micro_hint_line(ml)
+    if not u:
+        reply = (
+            "Thori detail aur likho ta jawab DIRECT tumhari situation pe latch ho 🤍 "
+            + tail_q
+        )
+    else:
+        reply = (
+            f"Tumhari wording \"{u}\" — okay, yehi jagah pakad ke chalenge 🤍 "
+            f"{hint}\n\n{tail_q}"
+        )
+
+    ex = "none"
+    if pe in ("anxiety", "stressed") or any(k in ml for k in ("anxiety", "ghabra", "panic")):
+        ex = "breathing"
+    elif pe in ("sad", "angry"):
+        ex = "grounding"
+    tech = (
+        "grounding anchors"
+        if ex == "grounding"
+        else ("paced breathing" if ex == "breathing" else "focused reflection")
+    )
+    return {
+        "response": reply,
+        "suggested_exercise": ex,
+        "technique_used": tech,
+        "follow_up_needed": True,
+    }
 
 
 def _sanitize_session_file_stem(session_id: str) -> str:
@@ -175,7 +265,12 @@ class MemoryAgent:
             '\nIssues/relationships/recent_events must be SHORT string arrays.'
             f"\nRecent chat context:\n{hs}\nMessage: {msg}"
         )
-        raw = gemini_plain_text(prompt, system_instruction="Return JSON object only.")
+        raw = gemini_plain_text(
+            prompt,
+            system_instruction="Return JSON object only.",
+            temperature=0.7,
+            max_output_tokens=768,
+        )
 
         defaults: dict[str, Any] = {
             "name": "",
@@ -309,7 +404,12 @@ class MemoryAgent:
             "relationships[], recent_events[].\n\n"
             f"Existing_hint: {json.dumps(merged, ensure_ascii=False)[:3500]}\n\nSESSION_EXCERPTS:\n{blob}"
         )
-        raw = gemini_plain_text(prompt, system_instruction="Return JSON object only.")
+        raw = gemini_plain_text(
+            prompt,
+            system_instruction="Return JSON object only.",
+            temperature=0.7,
+            max_output_tokens=2048,
+        )
         jb = extract_first_json(raw or "")
         if jb:
             try:
@@ -357,7 +457,12 @@ class MemoryAgent:
             'Roman Urdu + English mixed paragraph ONLY: "User ka naam X hai, wo Y city mein ..., '
             'issues ..." — max 380 characters.\nONLY use facts in profile JSON;\nJSON:\n' + pj[:8000]
         )
-        txt = gemini_plain_text(prompt, system_instruction="Warm dost tone. No invention.")
+        txt = gemini_plain_text(
+            prompt,
+            system_instruction="Warm dost tone. No invention.",
+            temperature=0.7,
+            max_output_tokens=512,
+        )
         t = safe_str(txt, max_len=450)
         if t:
             return t
@@ -394,6 +499,8 @@ class EmotionAgent:
             + "\n\nAnswer ONLY compact JSON {\"is_crisis\":boolean,\"severity\":\"low\"|\"medium\"|\"high\","
             '"reason_short":""}',
             system_instruction='Detect self-harm or suicide acute risk. Conservative for "medium". JSON only.',
+            temperature=0.7,
+            max_output_tokens=256,
         )
         jb = extract_first_json(probe or "") if probe else None
         try:
@@ -444,7 +551,12 @@ class EmotionAgent:
             f"Recent mood scores (current): {mh}\n"
             f"Last messages:\n{hist_blob}"
         )
-        raw = gemini_plain_text(prompt, system_instruction="JSON only. No markdown.")
+        raw = gemini_plain_text(
+            prompt,
+            system_instruction="JSON only. No markdown.",
+            temperature=0.7,
+            max_output_tokens=1024,
+        )
         jb = extract_first_json(raw or "") if raw else None
 
         def _fallback() -> dict[str, Any]:
@@ -501,6 +613,10 @@ class EmotionAgent:
 
 
 class TherapyAgent:
+    def __init__(self) -> None:
+        """Cache model id for optional direct generate_content mirrors."""
+        self._preferred_model = AGENT_PRIMARY_MODEL
+
     def respond(
         self,
         message: str,
@@ -508,52 +624,92 @@ class TherapyAgent:
         memory_context: str,
         mood: int | None,
     ) -> dict[str, Any]:
-        mood_str = str(mood) if isinstance(mood, int) else "unknown"
-        emo_txt = json.dumps(emotion_analysis, ensure_ascii=False)[:8000]
+        emotion_data = emotion_analysis if isinstance(emotion_analysis, dict) else {}
+        mood_disp = mood if isinstance(mood, int) else "unknown"
+        mem = safe_str(memory_context, max_len=4000).replace('"', "'")
+        user_msg = safe_str(message, max_len=7500).replace('"', "'")
 
-        prompt = (
-            "You are Sukoon AI therapist (warm Pakistani dost). "
-            f"Memory profile paragraph / facts:\n{safe_str(memory_context, max_len=6000)}\n\n"
-            f"Current emotion JSON:\n{emo_txt}\n"
-            f"Current mood slider: {mood_str}/10\n\n"
-            "Generate therapeutic reply. Reply rules:\n"
-            "Roman Urdu + English mix.\nMax 4 sentences.\nPersonal (use name if known).\n"
-            "Validate specific emotion.\nONE practical CBT micro-step.\nEnds with ONE caring question.\n\n"
-            "Return ONLY valid JSON keys:\n"
-            '"response" (required string),\n'
-            '"suggested_exercise": "breathing"|"grounding"|"none",\n'
-            '"technique_used" (short phrase e.g. Thought reframing, Breathing pacing),\n'
-            '"follow_up_needed": boolean\n'
-            f"\nMessage: {safe_str(message, max_len=8000)}"
-        )
-        raw = gemini_plain_text(prompt, system_instruction='JSON output only.')
-        jb = extract_first_json(raw or "") if raw else None
+        base_fallback = therapy_fallback_bundle(message, emotion_data)
 
-        fallback_reply = (
-            "Main yahan hun sunne ke liye 🤍 Dil ki baat share karna kaafi courageous hai."
-            " Aik saans araam se lo — ab jo sab se tang kar raha hai, woh chota sa lakshya banao."
-            " Aaj sham ko tum apne liye konsi choti khushi choose karoge?"
-        )
+        prompt = f"""You are Sukoon AI — a caring Pakistani friend who gives DIFFERENT responses every time based on what user actually said.
 
-        base = {
-            "response": fallback_reply,
-            "suggested_exercise": "none",
-            "technique_used": "listening & grounding",
-            "follow_up_needed": True,
-        }
+STRICT RULES:
+- NEVER start with "Main yahan hun sunne ke liye"
+- NEVER use "courageous"
+- NEVER give generic comfort — respond to EXACTLY what they said
+- If user says "anxiety hai" → give specific anxiety advice
+- If user says "exam pressure" → talk about exams specifically
+- If user says "neend nahi" → talk about sleep specifically
+- If user says "ghar mein tension" → talk about family specifically
+- Use their actual words back to them naturally
+- Be conversational like a real dost — not a therapist script
+
+User emotion: {emotion_data.get("primary_emotion", "okay")}
+Emotion intensity: {emotion_data.get("intensity", 5)}/10
+User mood score: {mood_disp}/10
+Memory context (may be incomplete): {mem}
+
+User said: "{user_msg}"
+
+Respond in 3-4 sentences MAX. Roman Urdu + English mix.
+End with ONE specific question related to what they said.
+Every response must be UNIQUE and PERSONAL.
+
+Return ONLY valid JSON (no markdown) with keys:
+  "response" (string),
+  "suggested_exercise" exactly one of: breathing, grounding, none,
+  "technique_used" (short phrase, what you actually used),
+  "follow_up_needed" (boolean)
+"""
+
+        gen_cfg = _generation_config(temperature=0.9, max_output_tokens=300)
+        raw_out = ""
+
+        if gen_cfg is not None:
+            for model_name in (self._preferred_model, AGENT_MODEL_FALLBACK):
+                try:
+                    model = genai.GenerativeModel(model_name=model_name)
+                    resp = model.generate_content(prompt, generation_config=gen_cfg)
+                    txt = safe_str(getattr(resp, "text", ""))
+                    if txt:
+                        raw_out = txt
+                        break
+                except gexc.NotFound:
+                    continue
+                except Exception as e:
+                    if _quotaish(e):
+                        break
+                    print(f"TherapyAgent direct model {model_name!r}:", e)
+                    traceback.print_exc()
+                    break
+
+        if not raw_out:
+            raw_out = gemini_plain_text(
+                prompt,
+                system_instruction="ONLY valid compact JSON.",
+                temperature=0.9,
+                max_output_tokens=300,
+            )
+
+        jb = extract_first_json(raw_out or "") if raw_out else None
+
+        banned_openers = ("main yahan hun sunne", "courageous", "sunne ke liye")
         if not jb:
-            return base
+            return base_fallback
         try:
             d = json.loads(jb)
             if not isinstance(d, dict):
-                return base
+                return base_fallback
             rep = safe_str(str(d.get("response", "")), max_len=5000)
-            if not rep:
-                rep = base["response"]
+            low_rep = rep.lower()
+            if not rep or any(b in low_rep for b in banned_openers):
+                return base_fallback
             ex = safe_str(str(d.get("suggested_exercise", "none"))).lower() or "none"
             if ex not in ALLOWED_EXERCISES:
                 ex = "none"
-            tech = safe_str(str(d.get("technique_used", "")), max_len=200) or base["technique_used"]
+            tech = safe_str(str(d.get("technique_used", "")), max_len=200)
+            if not tech:
+                tech = base_fallback["technique_used"]
             fol = bool(d.get("follow_up_needed"))
             return {
                 "response": rep,
@@ -562,7 +718,7 @@ class TherapyAgent:
                 "follow_up_needed": fol,
             }
         except json.JSONDecodeError:
-            return base
+            return base_fallback
 
 
 class OrchestratorAgent:
@@ -678,14 +834,7 @@ class OrchestratorAgent:
         try:
             ther = self.therapy.respond(msg, emo, mem_summary, mood)
         except Exception:
-            ther = {
-                "response": (
-                    "Tumhari feelings valid hain 🤍 Chhoti si saans lein, phir batao kya mind pe sab se zyada loud hai?"
-                ),
-                "suggested_exercise": "breathing",
-                "technique_used": "Diaphragmatic breathing cue",
-                "follow_up_needed": True,
-            }
+            ther = therapy_fallback_bundle(msg, emo if isinstance(emo, dict) else {})
 
         reply = safe_str(ther.get("response", ""), max_len=8000)
         if crisis.get("is_crisis") and severity == "medium" and emergency[:40] not in reply:
