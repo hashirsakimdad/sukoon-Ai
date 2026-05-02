@@ -119,20 +119,52 @@
     agentTechniqueLine && (agentTechniqueLine.textContent = "");
   }
 
-  const EMOJI_BY_MOOD = (n) => {
-    if (n <= 3) return "Low";
-    if (n <= 5) return "OK";
-    if (n <= 7) return "Good";
-    return "High";
-  };
+  function getMoodEmoji(score) {
+    if (score <= 2) return "😢";
+    if (score <= 4) return "😔";
+    if (score <= 6) return "😐";
+    if (score <= 8) return "😊";
+    return "😄";
+  }
+
+  function getMoodLabel(score) {
+    if (score <= 2) return "Bahut Mushkil";
+    if (score <= 4) return "Theek Nahi";
+    if (score <= 6) return "Theek Hai";
+    if (score <= 8) return "Acha Lag Raha";
+    return "Bahut Acha";
+  }
+
+  function getEmotionEmoji(emotion) {
+    const map = {
+      khushi: "😊",
+      happy: "😊",
+      udaas: "😢",
+      sad: "😢",
+      anxious: "😰",
+      anxiety: "😰",
+      gussa: "😤",
+      angry: "😤",
+      neutral: "😐",
+      ok: "😐",
+      theek: "😐",
+      dar: "😨",
+      fear: "😨",
+    };
+    const key = String(emotion || "").toLowerCase();
+    for (const [k, v] of Object.entries(map)) {
+      if (key.includes(k)) return v;
+    }
+    return "💭";
+  }
 
   const EMOTION_ICONS = {
-    anxiety: "ANX",
-    sad: "SAD",
-    stressed: "STR",
-    angry: "ANG",
-    okay: "OK",
-    happy: "HAP",
+    anxiety: "😰",
+    sad: "😢",
+    stressed: "😤",
+    angry: "😤",
+    okay: "😐",
+    happy: "😊",
   };
 
   /** @type {SpeechRecognition | null} */
@@ -198,14 +230,23 @@
     const em = String(emotion || "okay").toLowerCase();
     const col = color || "#14b8a6";
     const ico =
-      typeof customEmoji === "string" && customEmoji.trim() ? customEmoji.trim() : EMOTION_ICONS[em] || EMOTION_ICONS.okay;
+      typeof customEmoji === "string" && customEmoji.trim()
+        ? customEmoji.trim()
+        : getEmotionEmoji(`${em} ${urduLabel || ""}`) || EMOTION_ICONS[em] || EMOTION_ICONS.okay;
     emotionBadge.style.setProperty("--emotion-glow", col);
-    emotionUrdu.textContent = urduLabel || em;
+    const label = urduLabel ? `${capitalizeEmotion(em)} — ${urduLabel}` : capitalizeEmotion(em);
+    emotionUrdu.textContent = label || em;
     emotionEmojiEl.textContent = ico;
     if (voiceOverlayEmoji && voiceOverlayUrdu) {
       voiceOverlayEmoji.textContent = ico;
-      voiceOverlayUrdu.textContent = urduLabel || em;
+      voiceOverlayUrdu.textContent = label || em;
     }
+  }
+
+  function capitalizeEmotion(em) {
+    const e = String(em || "").toLowerCase();
+    if (!e) return "";
+    return e.charAt(0).toUpperCase() + e.slice(1);
   }
 
   function hideExercises() {
@@ -328,8 +369,10 @@
   function updateMoodUI() {
     if (!moodEmoji || !moodValue || !moodSlider) return;
     const n = getMood();
-    moodEmoji.textContent = EMOJI_BY_MOOD(n);
-    moodValue.textContent = String(n);
+    moodEmoji.textContent = getMoodEmoji(n);
+    moodValue.textContent = `${getMoodLabel(n)} ${n}/10`;
+    const den = document.querySelector(".mood-den");
+    if (den) den.textContent = "";
     const t = (n - 1) / 9;
     moodSlider.style.background = `linear-gradient(90deg, 
       hsl(${220 - t * 40}, 70%, 48%), 
