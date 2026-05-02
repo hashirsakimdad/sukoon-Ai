@@ -181,7 +181,7 @@ def _micro_hint_line(ml: str) -> str:
     if "neend" in ml or "sleep" in ml or "sone" in ml:
         return "Aaj raat lights dim + screen thori jaldi band karke try karo."
     if "ghar" in ml or "family" in ml or "ma" in ml or "baap" in ml:
-        return "Aik calm line soch lo jo tum bol sakte ho bina larai ke."
+        return "Abhi bas itna karo: 2 minute ka break lo, pani pi lo, aur jo baat kehni hai usko aik simple line mein likh lo."
     if "anxiety" in ml or "ghabra" in ml or "panic" in ml:
         return "Abhi 4-count inhale / 6-count exhale 5 rounds kar ke dekho."
     return "Thora sa context likho: kab se aur kis cheez se start hua?"
@@ -205,16 +205,23 @@ def therapy_fallback_bundle(message: str, emotion_data: dict[str, Any]) -> dict[
     else:
         tail_q = "Is feeling ka sab se recent moment kaunsa tha jo ab tak yaad hai?"
 
-    if not u:
-        reply = (
-            "Thori detail aur likho ta jawab direct tumhari situation pe ho. "
-            + tail_q
-        )
-    else:
-        hint = _micro_hint_line(ml)
-        reply = (
-            f"{hint}\n\n{tail_q}"
-        )
+    # 4-sentence fallback: validation → empathy → practical step → caring question
+    def _validation() -> str:
+        if "anxiety" in ml or "ghabra" in ml or "panic" in ml or pe == "anxiety":
+            return "Anxiety feel hona bilkul samajh aata hai."
+        if "udaas" in ml or "sad" in ml or pe == "sad":
+            return "Udaasi feel hona bilkul theek hai."
+        if "ghar" in ml or "family" in ml:
+            return "Ghar ki tension se thak jana bilkul normal hai."
+        if "exam" in ml or "paper" in ml or "test" in ml:
+            return "Exam ka pressure heavy lagna bilkul natural hai."
+        return "Yeh feeling valid hai, aur tum akelay nahi ho."
+
+    def _empathy() -> str:
+        return "Yaar yeh sach mein mushkil hai, is waqt dimaag aur jism dono heavy ho jate hain."
+
+    step = _micro_hint_line(ml)
+    reply = f"{_validation()} {_empathy()} {step} {tail_q}"
 
     ex = "none"
     if pe in ("anxiety", "stressed") or any(k in ml for k in ("anxiety", "ghabra", "panic")):
@@ -628,64 +635,147 @@ class TherapyAgent:
         user_msg = safe_str(message, max_len=6000).replace('"', "'")
         mem = safe_str(memory_context, max_len=2200).replace('"', "'")
         mood_disp = mood if isinstance(mood, int) else "unknown"
+        emotion = safe_str(emotion_data.get("primary_emotion", "okay"), max_len=24)
+        intensity = emotion_data.get("intensity", 5)
+        try:
+            intensity = int(intensity)
+        except Exception:
+            intensity = 5
 
-        system_prompt = """
-Tu Sukoon AI hai — ek Pakistani dost jo sun'ta hai.
+        system_prompt = f"""
+Tum Sukoon AI ho — Pakistan ka pehla Roman Urdu mental health 
+support chatbot. Tum ek caring, warm dost ho jo mental health 
+samajhta hai.
 
-SAKHTH RULES — inn ko kabhi mat todo:
-1. User ka message REPEAT mat karo — kabhi nahi
-2. "Achha tumne bola" — FORBIDDEN
-3. "Tumhari wording" — FORBIDDEN
-4. "yehi jagah pakad" — FORBIDDEN
-5. "Quick win" — FORBIDDEN
-6. Agar user beemar hai — sympathy do, theek hone ki dua karo
-7. Agar udaas hai — warmth do
-8. Agar anxious hai — calm karo
-9. Agar neend nahi — neend ke baare mein baat karo
-10. Agar exam stress — exam ke baare mein baat karo
+SABSE IMPORTANT RULES:
+1. Pehle user ki feeling VALIDATE karo — judge mat karo
+2. Phir EMPATHY dikhao — "yaar yeh sach mein mushkil hai"
+3. Phir EK chota practical suggestion do
+4. End mein EK caring sawaal
 
-RESPONSE FORMAT:
-- Sirf Roman Urdu mein
-- 2-3 lines, natural aur warm
-- End mein ek caring sawal
-- Bilkul dost ki tarah — koi robot format nahi
+OUTPUT CONSTRAINTS (must follow):
+- Roman Urdu only
+- Exactly 4 sentences (no more, no less), in this order:
+  1) Validation
+  2) Empathy ("yaar yeh sach mein mushkil hai" style)
+  3) One small practical step (breathing / grounding / tiny next action)
+  4) One caring question (sirf ek sawal)
+- No life-coach tone, no lectures, no clinical/robotic language
 
-EXAMPLES OF GOOD RESPONSES:
-User: "bukar hai" -> "Uff yaar, bukar mein bahut takleef hoti hai. Pani pi rahe ho? Kab se hai yeh?"
-User: "neend nahi" -> "Neend na aaye toh raat bari mushkil lagti hai. Kya dimaag mein kuch chal raha hai?"
-User: "udaas hun" -> "Koi baat nahi yaar, udaasi kabhi kabhi aa hi jaati hai. Kya hua aaj?"
+USER NE YEH KAHA: {user_msg}
+EMOTION: {emotion} (intensity: {intensity}/10)
+MOOD: {mood_disp}/10
+MEMORY: {mem}
+
+RESPONSE EXAMPLES based on what they say:
+
+If anxiety:
+"Yaar anxiety sach mein bahut tiring hoti hai — jism aur dimaag 
+dono thak jaate hain. Abhi ek kaam karo — 4 second saans lo, 
+4 second roko, 4 second mein chodo. Yeh cycle 3 baar karo.
+Kya anxiety kisi specific cheez ki wajah se hai ya bas aise hi?"
+
+If sad/udaas:
+"Udaasi ko feel karna bilkul theek hai yaar — isko daba mat.
+Kabhi kabhi bas koi sunne wala chahiye hota hai. Main yahan hun.
+Kya aaj kuch aisa hua jo specially heavy feel hua?"
+
+If family tension:
+"Ghar ki tension bahut drain karti hai yaar — woh jagah jo 
+safe honi chahiye wahan bhi chain nahi — yeh sach mein bahut 
+mushkil hai. Kya tum mujhe thoda aur bata sakte ho kya ho raha hai?"
+
+If exam stress:
+"Exam ka pressure overwhelming ho sakta hai — especially jab 
+lagta hai sab kuch is pe depend karta hai. Yaar ek kaam karo —
+abhi sirf aaj ka ek subject, ek chapter. Bas itna. 
+Kaunsa subject sabse zyada scary lag raha hai?"
+
+NEVER:
+- Generic \"Main yahan hun sunne ke liye\"
+- \"courageous\" word use karna
+- Life coaching advice
+- \"Aik calm line soch lo\" (yeh exact line kabhi mat likhna)
+- English-only responses
+- Robotic/clinical language
+
+ALWAYS:
+- Roman Urdu main baat karo
+- Personal aur specific raho
+- Warm dost ki tarah baat karo
+- Maximum 4 sentences
 """
 
-        prompt = (
-            f"{system_prompt}\n\n"
-            f"User message: {user_msg}\n"
-            f"Memory: {mem}\n"
-            f"Emotion: {safe_str(emotion_data.get('primary_emotion', 'okay'), max_len=24)}\n"
-            f"Mood: {mood_disp}/10\n"
-        )
+        prompt = system_prompt.strip()
 
         try:
-            gen_cfg = _generation_config(temperature=0.9, max_output_tokens=220)
+            generation_config = genai.types.GenerationConfig(
+                temperature=0.95,
+                max_output_tokens=250,
+            )
+            forbidden_phrases = [
+                "Aik calm line soch lo",
+                "courageous",
+                "Quick win",
+                "yehi jagah pakad",
+                "Achha tumne bola",
+                "Tumhari wording",
+                "Main yahan hun sunne ke liye",
+            ]
+
+            def _has_forbidden(t: str) -> bool:
+                low = t.lower()
+                for p in forbidden_phrases:
+                    if p.lower() in low:
+                        return True
+                return False
+
+            def _sentence_count(t: str) -> int:
+                # Keep it simple: split by sentence enders; fall back to non-empty lines.
+                parts = [s.strip() for s in re.split(r"[.!?؟]+", t) if s.strip()]
+                if len(parts) >= 2:
+                    return len(parts)
+                lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+                return len(lines)
+
             for model_name in (self._preferred_model, AGENT_MODEL_FALLBACK):
                 try:
                     model = genai.GenerativeModel(model_name=model_name)
-                    if gen_cfg is not None:
-                        resp = model.generate_content(prompt, generation_config=gen_cfg)
-                    else:
-                        resp = model.generate_content(prompt)
-                    text = safe_str(getattr(resp, "text", ""), max_len=5000).strip()
-                    if text:
+                    resp = model.generate_content(prompt, generation_config=generation_config)
+                    text = safe_str(getattr(resp, "text", ""), max_len=6000).strip()
+
+                    # If the model violates rules, do a single corrective retry.
+                    if text and (_has_forbidden(text) or _sentence_count(text) != 4):
+                        fix_prompt = (
+                            "Tumhara pichla jawab rules tor gaya.\n"
+                            "Ab dobara likho aur inn rules ko strictly follow karo:\n"
+                            "- Roman Urdu only\n"
+                            "- Exactly 4 sentences (validation, empathy, 1 practical step, 1 caring question)\n"
+                            "- In phrases ko kabhi mat likhna: "
+                            + ", ".join([f'"{p}"' for p in forbidden_phrases])
+                            + "\n\n"
+                            f"User: {user_msg}\n"
+                            f"Emotion: {emotion} (intensity {intensity}/10)\n"
+                            f"Mood: {mood_disp}/10\n"
+                            f"Memory: {mem}\n"
+                        )
+                        resp2 = model.generate_content(fix_prompt, generation_config=generation_config)
+                        text2 = safe_str(getattr(resp2, "text", ""), max_len=6000).strip()
+                        if text2 and not _has_forbidden(text2):
+                            text = text2
+
+                    if text and not _has_forbidden(text):
+                        # Note: exercise suggestion stays conservative; frontend handles exercises separately.
                         return {
                             "response": text,
                             "suggested_exercise": "none",
-                            "technique_used": "personalized support",
+                            "technique_used": "validation + practical step",
                             "follow_up_needed": True,
                         }
                 except gexc.NotFound:
                     continue
             raise RuntimeError("Empty Gemini response")
         except Exception:
-            # Only fallback when Gemini truly errors / returns nothing.
             return base_fallback
 
 

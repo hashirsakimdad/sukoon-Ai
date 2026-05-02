@@ -501,7 +501,35 @@
     } catch (_) {}
   }
 
-  // Requested female-voice TTS (plain Web Speech API)
+  function getBestVoice() {
+    const voices = (synth && synth.getVoices && synth.getVoices()) || [];
+
+    // Priority 1: Real Urdu voice
+    let voice = voices.find((v) => v.lang === "ur-PK");
+    if (voice) return { voice, lang: "ur-PK" };
+
+    // Priority 2: Any Urdu
+    voice = voices.find((v) => String(v.lang || "").startsWith("ur"));
+    if (voice) return { voice, lang: "ur" };
+
+    // Priority 3: Indian English (closer to Pakistani accent)
+    voice = voices.find((v) => v.lang === "en-IN");
+    if (voice) return { voice, lang: "en-IN" };
+
+    // Priority 4: Any Indian voice
+    voice = voices.find((v) => String(v.name || "").toLowerCase().includes("india"));
+    if (voice) return { voice, lang: "en-IN" };
+
+    // Priority 5: Female English voice (warmer)
+    voice = voices.find((v) => {
+      const nm = String(v.name || "").toLowerCase();
+      return nm.includes("female") || nm.includes("zira") || nm.includes("hazel");
+    });
+    if (voice) return { voice, lang: "en-US" };
+
+    return { voice: voices[0] || null, lang: "en-US" };
+  }
+
   function speakText(text) {
     return new Promise((resolve) => {
       const t = String(text || "").trim();
@@ -511,40 +539,24 @@
       }
 
       synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(t);
 
-      utterance.onend = () => resolve();
-      utterance.onerror = () => resolve();
-
-      function setVoice() {
-        const voices = synth.getVoices();
-
-        const femaleVoice = voices.find(
-          (v) =>
-            v.name.includes("Zira") ||
-            v.name.includes("Heera") ||
-            v.name.includes("Samantha") ||
-            v.name.includes("Karen") ||
-            v.name.includes("Moira") ||
-            v.name.includes("Susan") ||
-            v.name.toLowerCase().includes("female"),
-        );
-
-        if (femaleVoice) {
-          utterance.voice = femaleVoice;
-        }
-
-        utterance.rate = 0.9;
+      const trySpeak = () => {
+        const picked = getBestVoice();
+        const utterance = new SpeechSynthesisUtterance(t);
+        if (picked.voice) utterance.voice = picked.voice;
+        utterance.lang = picked.lang;
+        utterance.rate = 0.8;
         utterance.pitch = 1.1;
         utterance.volume = 1.0;
-
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
         synth.speak(utterance);
-      }
+      };
 
-      if (synth.getVoices().length > 0) {
-        setVoice();
+      if (synth.getVoices().length === 0) {
+        synth.onvoiceschanged = trySpeak;
       } else {
-        synth.onvoiceschanged = setVoice;
+        trySpeak();
       }
     });
   }
