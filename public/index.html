@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sukoon AI — Mental Health Companion</title>
+  <meta name="description" content="Pakistan's first Roman Urdu mental health AI chatbot. Stress, anxiety, sadness — Sukoon sunta hai." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <!-- ── Navbar ──────────────────────────────────────────────────────── -->
+  <nav class="navbar" id="navbar">
+    <div class="container">
+      <a href="/" class="nav-logo" data-link>🌿 Sukoon AI</a>
+      <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+      <div class="nav-links" id="nav-links">
+        <a href="/" data-link>Home</a>
+        <a href="/about" data-link>About</a>
+        <a href="/features" data-link>Features</a>
+        <a href="/exercises" data-link>Exercises</a>
+        <a href="/crisis" data-link>Crisis Help</a>
+        <!-- Auth-dependent links inserted by JS -->
+        <span id="auth-nav"></span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Page content (replaced by router) ──────────────────────────── -->
+  <main id="app"></main>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

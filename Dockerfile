@@ -1,9 +1,9 @@
-FROM python:3.11-slim
+FROM node:22-slim
 WORKDIR /app
-RUN mkdir -p data/sessions
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN mkdir -p data
+COPY package*.json ./
+RUN npm ci --omit=dev
 COPY . .
 ENV PORT=8080
 EXPOSE 8080
-CMD ["python", "app.py"]
+CMD ["node", "src/server.js"]

@@ -1,140 +1,85 @@
-<!-- Gold Tier README for Google AI Seekho 2026 --> 
+# 🌿 Sukoon AI
 
-# 🧠 Sukoon AI  
-### Pakistan ka Pehla Roman Urdu Mental Health AI Chatbot
+**Pakistan's First Roman Urdu Mental Health AI Companion**
 
-[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](#)
-[![Flask](https://img.shields.io/badge/Flask-Backend-black.svg)](#)
-[![Gemini](https://img.shields.io/badge/Google%20Gemini-AI-4285F4.svg)](#)
-[![Cloud%20Run](https://img.shields.io/badge/Google%20Cloud%20Run-Deployed-0F9D58.svg)](#)
-[![Last%20Commit](https://img.shields.io/github/last-commit/hashirsakimdad/sukoon-Ai)](#)
-[![Made%20for%20Pakistan](https://img.shields.io/badge/Made%20with%20love%20for-Pakistan-006600.svg)](#)
-
-Sukoon AI Pakistan ke liye banaya gaya ek **warm, culturally-aware mental health companion** hai —  
-Roman Urdu, Urdu, aur English mein aap ki baat suntay huay **stress, anxiety, sadness** ko gently handle karta hai.  
-Goal simple hai: **therapy ka stigma kam**, aur **support zyada** — har phone pe, har waqt.
-
----
+Sukoon AI is a warm, culturally-aware mental health chatbot that supports users in Roman Urdu, Urdu, and English. It helps with stress, anxiety, sadness, and everyday emotional struggles — gently, privately, and for free.
 
 ## ✨ Features
 
-- 🎤 **Voice Input** — Roman Urdu mein bolo  
-- 🧠 **Agent-Based AI** — context yaad rakhta hai  
-- 💾 **Conversation History** — pichli baatein save hoti hain  
-- 😭 **Real-time Emotion Detection** — 6 emotions  
-- 📊 **Live Mood Tracking Chart**  
-- 🧘 **Interactive Breathing Exercise** (animated)  
-- 🌿 **Grounding Exercise (5-4-3-2-1)**  
-- 🌙 **Dark / Light Mode**  
-- 🚨 **Crisis Support** — Umang `0317-4288665`  
-- 🇵🇰 **Pakistani Cultural Context Aware**  
-
----
-
-## 🖥️ Screenshots
-
-**App Screenshot** (coming soon — judges, we’ll add real screenshots before final submission)
-
----
+- 💬 **AI Therapy Chat** — Talk in Roman Urdu, Urdu, or English
+- 😊 **Real-time Emotion Detection** — 6 emotions detected automatically
+- 📊 **Mood Tracking** — Track your emotional journey over time
+- 🧘 **Breathing Exercise** — Animated 4-7-8 technique
+- 🌿 **5-4-3-2-1 Grounding** — Sensory grounding for panic moments
+- 🔐 **User Accounts** — Signup/login with saved conversation history
+- 🚨 **Crisis Detection** — Immediate helpline info when needed
+- 🌙 **Dark/Light Mode** — Follows system preference
+- 🇵🇰 **Pakistani Cultural Context** — Understands local idioms and culture
 
 ## 🛠️ Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | HTML, CSS, Vanilla JS |
-| Backend | Python, Flask, Flask-CORS |
-| AI | Google Gemini 1.5 Flash |
-| Memory | Agent-based JSON session storage |
-| Deployment | Docker, Google Cloud Run |
-| Version Control | Git, GitHub |
+| Backend | Node.js, Express |
+| Database | SQLite (better-sqlite3) |
+| Auth | JWT + bcrypt |
+| AI | Groq (Llama 3.3 70B) |
+| Frontend | Vanilla JS SPA, CSS |
+| Deployment | Docker |
 
----
-
-## 🚀 Live Demo
-
-🌐 **Live App:** `https://sukoon-ai-130411295021.asia-south1.run.app`
-
----
-
-## ⚙️ Run Locally
+## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/hashirsakimdad/sukoon-Ai.git
-cd sukoon-Ai/sukoon-ai
-pip install -r requirements.txt
+cd sukoon-Ai
+npm install
+cp .env.example .env
+# Edit .env and add your GROQ_API_KEY
+npm start
 ```
 
-Create a `.env` file (copy `.env.example`) and set:
+Open http://localhost:3000
+
+## 🐳 Docker
 
 ```bash
-GEMINI_API_KEY=your_gemini_api_key_here
-FLASK_SECRET_KEY=your_local_secret_key
+docker build -t sukoon-ai .
+docker run -p 3000:8080 -e GROQ_API_KEY=your_key -e JWT_SECRET=your_secret sukoon-ai
 ```
 
-Run:
+## 📁 Project Structure
 
-```bash
-python app.py
 ```
-
-Open:
-
-```text
-http://localhost:8080
-```
-
----
-
-## ☁️ Deploy to Cloud Run
-
-> **Security note:** Do **not** hardcode real API keys in README. Use env vars / Secret Manager.
-
-```bash
-cd "D:\sukoon ai\sukoon-ai"
-gcloud run deploy sukoon-ai --source . --platform managed --region asia-south1 --allow-unauthenticated --set-env-vars "GEMINI_API_KEY=YOUR_KEY_HERE,FLASK_SECRET_KEY=sukoon-ai-secret-2026"
-```
-
----
-
-## 🏗️ Project Structure
-
-```text
-sukoon-ai/
-├── app.py
-├── templates/
-│   └── index.html
-├── static/
-│   ├── style.css
-│   └── app.js
-├── data/
-│   └── .gitkeep
-├── .env.example
-├── .gitignore
-├── requirements.txt
+├── src/
+│   ├── server.js          # Express server entry point
+│   ├── db/database.js     # SQLite schema & connection
+│   ├── middleware/auth.js  # JWT auth middleware
+│   ├── routes/auth.js     # Signup/login endpoints
+│   ├── routes/chat.js     # Chat & mood endpoints
+│   └── services/ai.js     # Groq AI integration
+├── public/
+│   ├── index.html         # SPA shell
+│   ├── css/style.css      # Design system
+│   └── js/app.js          # Client-side router & UI
+├── data/                   # SQLite DB (gitignored)
 ├── Dockerfile
-└── .dockerignore
+└── package.json
 ```
 
----
+## 🔌 API Endpoints
 
-## 🤝 Why Sukoon AI?
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/auth/signup` | No | Create account |
+| POST | `/api/auth/login` | No | Login |
+| GET | `/api/auth/me` | Yes | Get current user |
+| GET | `/api/chat/conversations` | Yes | List conversations |
+| POST | `/api/chat/conversations` | Yes | Create conversation |
+| DELETE | `/api/chat/conversations/:id` | Yes | Delete conversation |
+| GET | `/api/chat/conversations/:id/messages` | Yes | Get messages |
+| POST | `/api/chat/conversations/:id/messages` | Yes | Send message & get AI reply |
+| GET | `/api/chat/mood?days=7` | Yes | Get mood entries |
 
-Pakistan mein mental health ka masla real hai — lekin **therapy ka stigma**, “log kya kahenge”, aur access ki kami ki wajah se log akelay reh jatay hain.  
-Sukoon AI ka mission yeh hai ke aap ko ek **safe, non-judgmental, culturally aware** space milay — jahan aap apni feelings bol bhi sako, likh bhi sako, aur choti choti CBT exercises se **thoda sukoon** pa sako.
+## ⚠️ Disclaimer
 
----
-
-## 🏆 Built For
-
-**Google AI Seekho 2026** | **#VibeKaregaPakistan 🇵🇰**
-
----
-
-## 👨‍💻 Author
-
-- **GitHub:** `hashirsakimdad`
-
----
-
-Made with ❤️ for Pakistan 🇵🇰
-
+Sukoon AI is a supportive companion, NOT a replacement for professional therapy. For serious mental health issues, please consult a professional. In crisis, call **Umang Helpline: 0317-4288665**.
