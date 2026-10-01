@@ -1,6 +1,10 @@
 const Groq = require("groq-sdk");
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+let _groq;
+function groq() {
+  if (!_groq) _groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "missing" });
+  return _groq;
+}
 
 const SYSTEM_PROMPT = `You are Sukoon AI — Pakistan's first Roman Urdu mental health companion.
 
@@ -45,7 +49,7 @@ Message: `;
  * @returns {Promise<string>} assistant reply
  */
 async function chat(messages) {
-  const completion = await groq.chat.completions.create({
+  const completion = await groq().chat.completions.create({
     model: "llama-3.3-70b-versatile",
     messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
     temperature: 0.7,
@@ -60,7 +64,7 @@ async function chat(messages) {
  * @returns {Promise<{emotion:string, score:number, summary:string}>}
  */
 async function detectEmotion(text) {
-  const completion = await groq.chat.completions.create({
+  const completion = await groq().chat.completions.create({
     model: "llama-3.3-70b-versatile",
     messages: [{ role: "user", content: EMOTION_PROMPT + text }],
     temperature: 0.2,
