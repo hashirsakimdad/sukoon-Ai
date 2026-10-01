@@ -28,7 +28,8 @@ app.use("/api/auth", require("./routes/auth"));
 app.use("/api/chat", require("./routes/chat"));
 
 // ── SPA fallback — serve index.html for any non-API, non-file route ─────────
-app.get(/^\/(?!api).*/, (req, res) => {
+app.get("*", (req, res) => {
+  if (req.path.startsWith("/api")) return res.status(404).json({ error: "Not found" });
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
